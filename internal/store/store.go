@@ -1,5 +1,6 @@
 // Package store is the management database of dbgateway: users, browser
-// sessions, OAuth clients, authorization and device codes, and tokens.
+// sessions, OAuth clients, authorization and device codes, tokens, approval
+// requests and break-glass grants.
 //
 // Secrets (tokens, codes, session IDs) are never stored. Callers pass the
 // SHA-256 hash of the secret (see HashSecret) and look rows up by that hash.
@@ -145,6 +146,8 @@ func (t *Token) Active(now time.Time) bool {
 type Store interface {
 	UpsertUser(ctx context.Context, u *User) error
 	GetUser(ctx context.Context, email string) (*User, error)
+	// ListUsers returns every known user ordered by e-mail.
+	ListUsers(ctx context.Context) ([]*User, error)
 
 	CreateSession(ctx context.Context, s *Session) error
 	GetSession(ctx context.Context, idHash string) (*Session, error)
@@ -190,6 +193,8 @@ type Store interface {
 	// DeleteExpired removes sessions, codes and tokens that expired before
 	// the given time. It returns the number of rows removed.
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
+
+	ApprovalStore
 
 	Close() error
 }
