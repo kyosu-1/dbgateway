@@ -408,4 +408,3 @@ func (e *Engine) defaultHint(st Stmt) string {
 	}
 	return "条件を見直すか、管理者に問い合わせてください。"
 }
-

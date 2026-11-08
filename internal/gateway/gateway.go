@@ -20,6 +20,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/audit"
 	"github.com/kyosu-1/dbgateway/internal/config"
+	"github.com/kyosu-1/dbgateway/internal/events"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	"github.com/kyosu-1/dbgateway/internal/mask"
 )
@@ -36,6 +37,8 @@ type Options struct {
 	Adapters map[string]analysis.Adapter // by database type
 	Audit    *audit.Logger
 	Logger   *slog.Logger
+	// Events receives query_denied events. Nil means events.Nop.
+	Events events.Publisher
 }
 
 // Gateway serves requests for all configured databases.
@@ -45,7 +48,11 @@ type Gateway struct {
 	audit  *audit.Logger
 	masker *mask.Masker
 	logger *slog.Logger
+	events events.Publisher
 	dbs    map[string]*database
+
+	// approvals handles writes that need approval; nil until SetApprovals.
+	approvals Approvals
 }
 
 type database struct {
@@ -68,7 +75,12 @@ func New(opts Options) (*Gateway, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	g := &Gateway{Evaluator: ev, cfg: opts.Config, audit: opts.Audit, masker: mask.NewMasker(opts.Config), logger: logger, dbs: map[string]*database{}}
+	pub := opts.Events
+	if pub == nil {
+		pub = events.Nop{}
+	}
+	g := &Gateway{Evaluator: ev, cfg: opts.Config, audit: opts.Audit, masker: mask.NewMasker(opts.Config), logger: logger,
+		events: pub, dbs: map[string]*database{}}
 	for i := range opts.Config.Databases {
 		db := &opts.Config.Databases[i]
 		ad, ok := opts.Adapters[db.Type]
@@ -161,8 +173,10 @@ func (g *Gateway) ListDatabases(p *identity.Principal) []DatabaseInfo {
 			Name: db.Name, Type: db.Type, Labels: db.Labels, Roles: roles,
 			CanSearch: slices.Contains(roles, identity.RoleViewer),
 			CanRead:   slices.Contains(roles, identity.RoleQuerier),
-			CanWrite:  false, // approvals are not enabled yet (phase 2)
-			MaxRows:   db.Limits.MaxRows,
+			// Writes are requested (executed after approval).
+			CanWrite: g.cfg.Approvals.Enabled && db.Primary.WriteUser != "" &&
+				slices.Contains(roles, identity.RoleQuerier) && slices.Contains(roles, identity.RoleWriter),
+			MaxRows: db.Limits.MaxRows,
 		})
 	}
 	return out
@@ -231,13 +245,16 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 	if len(objs) > req.Limit {
 		resp.Objects, resp.Truncated = objs[:req.Limit], true
 	}
+	unmask := g.RBAC.HasUnmask(p, d.cfg)
 	for i := range resp.Objects {
 		o := &resp.Objects[i]
 		for j := range o.Columns {
 			c := &o.Columns[j]
 			cl := g.Classifier.Classify(d.cfg, analysis.ColumnID{Schema: o.Schema, Table: o.Name, Column: c.Name}, p.Kind)
 			c.Class = cl.Class
-			c.Masked = mask.Sensitive(cl.Class, p.Kind)
+			// Unmask (humans only) reveals masked columns; humans see
+			// no_ai columns anyway.
+			c.Masked = mask.Sensitive(cl.Class, p.Kind) && !unmask
 		}
 	}
 	if resp.Objects == nil {
@@ -285,8 +302,10 @@ type ResultColumn struct {
 	Class    string `json:"class,omitempty"`
 }
 
-// ExecuteResponse is the result of ExecuteSQL. Status is ok, denied or
-// error. Denials carry why (Reason) and how to get through (Hint).
+// ExecuteResponse is the result of ExecuteSQL. Status is ok, pending,
+// denied or error. Denials carry why (Reason) and how to get through
+// (Hint). A pending response is not an error: the write was submitted for
+// approval and RequestID identifies the approval request.
 type ExecuteResponse struct {
 	Status    string         `json:"status"`
 	RequestID string         `json:"request_id"`
@@ -296,6 +315,19 @@ type ExecuteResponse struct {
 	TotalRows *int64         `json:"total_rows,omitempty"`
 	Truncated bool           `json:"truncated,omitzero"`
 	Notice    string         `json:"notice,omitempty"`
+	// RowsAffected is set for writes that were executed (break-glass).
+	RowsAffected *int64 `json:"rows_affected,omitempty"`
+	// BreakGlass is true when the write ran without approval because the
+	// caller has an active break-glass elevation.
+	BreakGlass bool `json:"break_glass,omitzero"`
+
+	// Pending approval (status "pending").
+	Approvers       []string   `json:"approvers,omitzero"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	ApprovalURL     string     `json:"approval_url,omitempty"`
+	Risk            string     `json:"risk,omitempty"`
+	ApprovalRule    string     `json:"approval_rule,omitempty"`
+	MaxAffectedRows int64      `json:"max_affected_rows,omitzero"`
 
 	Stage string `json:"stage,omitempty"`
 	Rule  string `json:"rule,omitempty"`
@@ -307,9 +339,10 @@ type ExecuteResponse struct {
 
 // Status values.
 const (
-	StatusOK     = "ok"
-	StatusDenied = "denied"
-	StatusError  = "error"
+	StatusOK      = "ok"
+	StatusPending = "pending"
+	StatusDenied  = "denied"
+	StatusError   = "error"
 )
 
 var genericReasons = []string{"test", "testing", "debug", "check", "query", "investigation", "n/a", "na", "none", "-", "調査", "確認", "テスト", "デバッグ", "念のため"}
@@ -320,12 +353,17 @@ func reasonTooVague(r string) bool {
 }
 
 // ExecuteSQL runs the full pipeline for one statement. It always returns a
-// response; denials and errors are reported in it and audited.
+// response; denials and errors are reported in it and audited. Writes that
+// need approval are submitted to the approval service and reported as
+// pending, or executed immediately for a human with an active break-glass
+// elevation.
 func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req ExecuteRequest) *ExecuteResponse {
 	start := time.Now()
 	resp := &ExecuteResponse{RequestID: NewRequestID()}
 	entry := &audit.Entry{RequestID: resp.RequestID, TraceID: req.TraceID, Event: "query", Principal: principalInfo(p),
 		Database: req.Database, Reason: req.Reason, SQLSHA256: sha256Hex(req.SQL)}
+	var ev *Evaluation
+	normalized := ""
 
 	finish := func() *ExecuteResponse {
 		if err := g.writeAudit(entry); err != nil {
@@ -337,11 +375,14 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	denied := func(stage analysis.Stage, rule, reason, hint string) *ExecuteResponse {
 		resp.Status, resp.Stage, resp.Rule, resp.Reason, resp.Hint = StatusDenied, string(stage), rule, reason, hint
 		entry.Decision, entry.Stage, entry.Rule = config.ActionDeny, string(stage), rule
-		return finish()
+		out := finish()
+		g.publishDenied(ctx, p, req, resp, normalized, ev)
+		return out
 	}
 	failed := func(reason, code string) *ExecuteResponse {
 		resp.Status, resp.Reason, resp.Code = StatusError, reason, code
 		resp.Columns, resp.Rows, resp.RowCount, resp.TotalRows, resp.Truncated, resp.Notice = nil, nil, 0, nil, false, ""
+		resp.RowsAffected = nil
 		if entry.Decision == "" {
 			entry.Decision = "error"
 		}
@@ -351,47 +392,29 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	}
 
 	d := g.dbs[req.Database]
-	early := ""
 	if d != nil {
 		if n, ok := d.adapter.(Normalizer); ok {
-			early = n.Normalize(req.SQL)
+			normalized = n.Normalize(req.SQL)
 		}
 	}
 	if d == nil || !g.RBAC.Has(p, d.cfg, identity.RoleQuerier) {
-		entry.SQL = redactedSQL(g.cfg, req.SQL, early)
+		entry.SQL = redactedSQL(g.cfg, req.SQL, normalized)
 		return denied(analysis.StageRole, "role:querier",
 			fmt.Sprintf("接続先 %q は存在しないか、クエリを実行する権限がありません。", req.Database),
 			"list_databases で使える接続先と権限を確認してください。")
 	}
 	if strings.TrimSpace(req.Reason) == "" {
-		entry.SQL = redactedSQL(g.cfg, req.SQL, early)
+		entry.SQL = redactedSQL(g.cfg, req.SQL, normalized)
 		return denied(analysis.StagePolicy, "builtin:reason-required",
 			"reason（何のためのクエリか）が空です。理由の記入は必須です。",
 			"依頼内容に沿った具体的な理由を reason に書いて再実行してください（例: 「問い合わせ#1234の調査のため、該当ユーザーのプランを確認」）。")
 	}
 
-	cat, err := d.catalog(ctx, catalogTTL)
+	ev, conn, err := g.evaluate(ctx, p, d, req.SQL)
 	if err != nil {
-		entry.SQL = redactedSQL(g.cfg, req.SQL, early)
+		entry.SQL = redactedSQL(g.cfg, req.SQL, normalized)
 		return failed(dbUnavailable(err).Error(), "")
 	}
-	conn, _ := d.connection(ctx)
-	limits := d.cfg.Limits
-	baseOpts := analysis.ExecOptions{ReadOnly: true, MaxRows: limits.MaxRows, MaxBytes: int64(limits.MaxBytes),
-		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()}
-	estimate := func(ctx context.Context) (*analysis.Estimate, error) {
-		return d.adapter.Estimate(ctx, conn, req.SQL, baseOpts)
-	}
-
-	ev := g.Evaluate(ctx, p, d.cfg, d.adapter, req.SQL, cat, estimate)
-	if ev.Analysis != nil && ev.Analysis.Statement.Unknown && time.Since(cat.LoadedAt) > 5*time.Second {
-		// The catalog may predate a new table: reload once and retry.
-		if fresh, err := d.catalog(ctx, 0); err == nil {
-			cat = fresh
-			ev = g.Evaluate(ctx, p, d.cfg, d.adapter, req.SQL, cat, estimate)
-		}
-	}
-	normalized := early
 	if ev.Analysis != nil {
 		normalized = ev.Analysis.Normalized
 		entry.Analysis = analysisInfo(ev)
@@ -402,7 +425,7 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	}
 	dec := ev.Decision
 	entry.ShadowDeniedBy = dec.ShadowDeniedBy
-	if !ev.Allowed() {
+	if !ev.Allowed() && !ev.NeedsApproval() {
 		return denied(dec.Stage, dec.Rule, dec.Message, dec.Hint)
 	}
 	if dec.Require.Reason && reasonTooVague(req.Reason) {
@@ -410,21 +433,51 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 			fmt.Sprintf("ポリシー %q は具体的な理由を求めていますが、reason が短すぎるか一般的すぎます。", dec.Rule),
 			"誰の依頼で何を確認するためのクエリかを具体的に書いてください。")
 	}
+
+	if ev.NeedsApproval() {
+		entry.Decision, entry.Stage, entry.Rule = config.ActionApprove, string(dec.Stage), dec.Rule
+		entry.Extra = map[string]any{"risk": dec.Risk, "approval_rule": dec.ApprovalRule.Name}
+		resp.Risk, resp.ApprovalRule = dec.Risk, dec.ApprovalRule.Name
+		resp.MaxAffectedRows = g.cfg.MaxAffectedRows(dec.ApprovalRule, ev.EstimateRows())
+		if g.approvals == nil {
+			return denied(analysis.StagePolicy, "builtin:approval-unavailable",
+				"承認サービスが利用できないため、書き込みを受け付けられません。", "管理者に問い合わせてください。")
+		}
+		if !p.IsAgent() && g.approvals.ElevationActive(ctx, p, d.cfg.Name) {
+			return g.breakGlassWrite(ctx, p, d, conn, req, ev, resp, entry, finish, failed)
+		}
+		pend, err := g.approvals.SubmitWrite(ctx, &Submission{RequestID: resp.RequestID, TraceID: req.TraceID, Principal: p,
+			Database: d.cfg, SQL: req.SQL, Reason: req.Reason, Evaluation: ev, MaxAffectedRows: resp.MaxAffectedRows})
+		if err != nil {
+			g.logger.Error("submit approval request failed", "err", err, "request_id", resp.RequestID)
+			return failed("承認リクエストを登録できませんでした。時間をおいて再実行するか、管理者に問い合わせてください。", "")
+		}
+		resp.Status, resp.Approvers, resp.ApprovalURL = StatusPending, pend.Approvers, pend.URL
+		expires := pend.ExpiresAt
+		resp.ExpiresAt = &expires
+		if resp.Approvers == nil {
+			resp.Approvers = []string{}
+		}
+		resp.Hint = "書き込みは承認待ちです（まだ実行されていません）。承認されるとdbgatewayが実行します。" +
+			"get_request で状態と結果を確認するか、ユーザーに承認を依頼してください。同じ変更を何度も申請しないでください。"
+		entry.Extra["status"] = StatusPending
+		return finish()
+	}
 	entry.Decision, entry.Stage, entry.Rule = config.ActionAllow, string(dec.Stage), dec.Rule
 
-	opts := baseOpts
+	limits := d.cfg.Limits
+	opts := analysis.ExecOptions{ReadOnly: true, MaxRows: limits.MaxRows, MaxBytes: int64(limits.MaxBytes),
+		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()}
 	if dec.Require.MaxRows > 0 && (opts.MaxRows <= 0 || dec.Require.MaxRows < opts.MaxRows) {
 		opts.MaxRows = dec.Require.MaxRows
 	}
 	opts.Replica = dec.Require.Replica
 
 	// Plan masking before executing: if lineage is unknown, stop here.
-	plans, err := g.Classifier.Plan(d.cfg, ev.Analysis.Output, p.Kind)
+	plans, err := g.plan(d.cfg, ev.Analysis.Output, p)
 	if err != nil {
 		entry.Decision = config.ActionDeny
-		return denied(analysis.StagePolicy, "builtin:untraceable-output",
-			"結果の列の出どころを追跡できないため、マスキングを保証できません。結果は返しません。",
-			"* や複雑な式を避け、必要な列を明示して書き直してください。")
+		return denied(analysis.StagePolicy, ruleUntraceable, msgUntraceable, hintUntraceable)
 	}
 
 	res, err := d.adapter.Execute(ctx, conn, req.SQL, opts)
@@ -433,11 +486,79 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 		return failed(msg, code)
 	}
 	if len(res.Columns) != len(plans) {
-		return failed("結果の列数が解析結果と一致しないため、安全のため結果を返しません。", "")
+		return failed(msgColumnMismatch, "")
 	}
 
 	resp.Status, resp.Notice = StatusOK, DataNotice
-	resp.Columns = make([]ResultColumn, len(res.Columns))
+	var maskedCols []string
+	resp.Columns, resp.Rows, maskedCols = g.applyMasking(plans, res)
+	resp.RowCount, resp.Truncated = res.RowCount, res.Truncated
+	if res.TotalRows >= 0 && res.Truncated {
+		total := res.TotalRows
+		resp.TotalRows = &total
+	}
+	if res.Truncated {
+		resp.Hint = fmt.Sprintf("行数またはサイズの上限に達したため、先頭の%d行だけを返しました。条件を絞るか集計して再実行してください。", res.RowCount)
+	}
+	entry.Result = &audit.ResultInfo{Rows: res.RowCount, Bytes: res.Bytes, DurationMS: res.Duration.Milliseconds(),
+		Truncated: res.Truncated, MaskedColumns: maskedCols}
+	return finish()
+}
+
+const (
+	ruleUntraceable   = "builtin:untraceable-output"
+	msgUntraceable    = "結果の列の出どころを追跡できないため、マスキングを保証できません。結果は返しません。"
+	hintUntraceable   = "* や複雑な式を避け、必要な列を明示して書き直してください。"
+	msgColumnMismatch = "結果の列数が解析結果と一致しないため、安全のため結果を返しません。"
+)
+
+// evaluate loads the catalog and evaluates sql for p on d. When the
+// statement references something the cached catalog does not know, the
+// catalog is reloaded once (it may predate a new table).
+func (g *Gateway) evaluate(ctx context.Context, p *identity.Principal, d *database, sql string) (*Evaluation, analysis.Conn, error) {
+	cat, err := d.catalog(ctx, catalogTTL)
+	if err != nil {
+		return nil, nil, err
+	}
+	conn, err := d.connection(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	limits := d.cfg.Limits
+	estimate := func(ctx context.Context, write bool) (*analysis.Estimate, error) {
+		return d.adapter.Estimate(ctx, conn, sql, analysis.ExecOptions{ReadOnly: !write,
+			StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()})
+	}
+	ev := g.Evaluate(ctx, p, d.cfg, d.adapter, sql, cat, estimate)
+	if ev.Analysis != nil && ev.Analysis.Statement.Unknown && time.Since(cat.LoadedAt) > 5*time.Second {
+		if fresh, err := d.catalog(ctx, 0); err == nil {
+			ev = g.Evaluate(ctx, p, d.cfg, d.adapter, sql, fresh, estimate)
+		}
+	}
+	return ev, conn, nil
+}
+
+// plan computes the masking treatment of each output column for p. Humans
+// with unmask on db see masked columns as they are.
+func (g *Gateway) plan(db *config.Database, out []analysis.OutputColumn, p *identity.Principal) ([]mask.OutputPlan, error) {
+	plans, err := g.Classifier.Plan(db, out, p.Kind)
+	if err != nil {
+		return nil, err
+	}
+	if g.RBAC.HasUnmask(p, db) {
+		for i := range plans {
+			if plans[i].Treatment == mask.Mask {
+				plans[i].Treatment, plans[i].Method = mask.Show, ""
+			}
+		}
+	}
+	return plans, nil
+}
+
+// applyMasking returns the result columns and rows with the plans applied,
+// and the names of the masked or withheld columns.
+func (g *Gateway) applyMasking(plans []mask.OutputPlan, res *analysis.Result) ([]ResultColumn, [][]any, []string) {
+	cols := make([]ResultColumn, len(res.Columns))
 	var maskedCols []string
 	for i, c := range res.Columns {
 		rc := ResultColumn{Name: c.Name, Type: c.Type}
@@ -449,9 +570,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 			rc.Withheld, rc.Class = true, plans[i].Class
 			maskedCols = append(maskedCols, c.Name)
 		}
-		resp.Columns[i] = rc
+		cols[i] = rc
 	}
-	resp.Rows = make([][]any, len(res.Rows))
+	rows := make([][]any, len(res.Rows))
 	for r, row := range res.Rows {
 		out := make([]any, len(row))
 		for i, v := range row {
@@ -464,19 +585,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 				out[i] = v
 			}
 		}
-		resp.Rows[r] = out
+		rows[r] = out
 	}
-	resp.RowCount, resp.Truncated = res.RowCount, res.Truncated
-	if res.TotalRows >= 0 && res.Truncated {
-		total := res.TotalRows
-		resp.TotalRows = &total
-	}
-	if res.Truncated {
-		resp.Hint = fmt.Sprintf("行数またはサイズの上限に達したため、先頭の%d行だけを返しました。条件を絞るか集計して再実行してください。", res.RowCount)
-	}
-	entry.Result = &audit.ResultInfo{Rows: res.RowCount, Bytes: res.Bytes, DurationMS: res.Duration.Milliseconds(),
-		Truncated: res.Truncated, MaskedColumns: maskedCols}
-	return finish()
+	return cols, rows, maskedCols
 }
 
 // Normalizer is optionally implemented by adapters to strip literals from
