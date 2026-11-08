@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
@@ -32,6 +33,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/scim"
 	"github.com/kyosu-1/dbgateway/internal/store"
+	"github.com/kyosu-1/dbgateway/internal/web"
 )
 
 func init() {
@@ -136,6 +138,19 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 		}
 		mcpOpts = append(mcpOpts, mcpserver.WithApprovals(s.approvals))
 	}
+	webOpts := web.Options{Config: cfg, Store: st, Auth: authSrv, Gateway: gw, Approvals: s.approvals, Logger: logger}
+	if ps, ok := sink.(*audit.PostgresSink); ok {
+		webOpts.AuditSearch = ps.Search
+	}
+	if s.notifier != nil {
+		authSrv.SetSlackLinker(s.notifier.Linker())
+	}
+	webApp, err := web.New(webOpts)
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
+	}
+	webApp.Register(mux)
+
 	mcpSrv := mcpserver.NewServer(gw, auth.PrincipalFromTokenInfo, mcpOpts...)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpSrv },
 		&mcp.StreamableHTTPOptions{Stateless: true, Logger: logger, PropagateRequestCancellation: true})
@@ -171,6 +186,12 @@ type managementStore interface {
 	store.Store
 	scim.Store
 	notify.Store
+}
+
+// OpenStore opens the management database selected by store.driver (for
+// CLI commands that need it, such as `dbgw passkey enroll`).
+func OpenStore(ctx context.Context, cfg *config.Config) (store.Store, error) {
+	return openStore(ctx, cfg)
 }
 
 // openStore opens the management database selected by store.driver.
@@ -326,6 +347,10 @@ func withRequestLog(logger *slog.Logger, next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start))
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/passkeys/enroll/") {
+			path = "/passkeys/enroll/[redacted]" // one-time enrollment token
+		}
+		logger.Debug("http", "method", r.Method, "path", path, "status", rec.status, "duration", time.Since(start))
 	})
 }

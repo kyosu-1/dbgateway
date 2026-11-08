@@ -1,0 +1,60 @@
+{{define "content"}}
+{{template "back" (dict "Href" .UserURL "Label" .U.Email)}}
+
+<div class="page-title">
+<h1>{{t "propose.heading"}}</h1>
+<p>{{t "propose.lead"}}</p>
+</div>
+
+{{with .Errors}}<div class="alert alert-error" role="alert"><ul class="plain-list">{{range .}}<li>{{t .}}</li>{{end}}</ul></div>{{end}}
+
+<form method="get" action="{{.FormURL}}" class="form-panel">
+<input type="hidden" name="generate" value="1">
+<fieldset class="checks">
+<legend>{{t "propose.databases"}}</legend>
+{{range .Databases}}<label class="check"><input type="checkbox" name="db" value="{{.}}"{{if has $.SelDBs .}} checked{{end}}><span>{{.}}</span></label>
+{{end}}
+</fieldset>
+<fieldset class="checks">
+<legend>{{t "propose.roles"}}</legend>
+{{range .Roles}}<label class="check"><input type="checkbox" name="role" value="{{.}}"{{if has $.SelRoles (printf "%s" .)}} checked{{end}}><span><strong>{{.}}</strong><span class="check-desc"> · {{t (printf "role.%s" .)}}</span></span></label>
+{{end}}
+</fieldset>
+<div class="field">
+<label for="p-until">{{t "propose.expires"}} <span class="label-note">{{t "propose.optional"}}</span></label>
+<input id="p-until" name="expires" type="datetime-local" value="{{.Expires}}">
+<p class="hint">{{t "propose.expires_hint" .Zone}}</p>
+</div>
+<div class="field">
+<label for="p-reason">{{t "propose.reason"}}</label>
+<input id="p-reason" name="reason" type="text" maxlength="1000" value="{{.Reason}}" required>
+</div>
+<div class="btn-row">
+<button type="submit" class="btn btn-primary btn-md">{{t "propose.generate"}}</button>
+<a class="btn btn-secondary btn-md" href="{{.UserURL}}">{{t "consent.cancel"}}</a>
+</div>
+</form>
+
+{{with .Proposal}}
+<section class="form-panel" aria-labelledby="h-yaml">
+<div class="stack-6">
+<h2 id="h-yaml">{{t "propose.yaml_heading"}}</h2>
+<p class="small muted">{{t "propose.yaml_lead"}}</p>
+<div class="diff" aria-hidden="true"><div class="ctx">role_bindings:</div>{{range .YAMLLines}}<div class="add">+{{.}}</div>{{end}}</div>
+<label class="visually-hidden" for="yaml-out">{{t "propose.yaml_heading"}}</label>
+<textarea id="yaml-out" class="control copy-source" readonly rows="6">{{.YAML}}</textarea>
+<div class="copy-row"><button type="button" class="btn-small" data-copy="yaml-out" data-copied="{{t "propose.copied"}}" hidden>{{t "propose.copy"}}</button><span id="yaml-out-copied" class="copied" role="status"></span></div>
+</div>
+<div class="stack-6">
+<h2 id="h-pr">{{t "propose.pr_heading"}}</h2>
+<label for="pr-title" class="small muted">{{t "propose.pr_title_label"}}</label>
+<input id="pr-title" class="control" type="text" readonly value="{{.PRTitle}}">
+<div class="copy-row"><button type="button" class="btn-small" data-copy="pr-title" data-copied="{{t "propose.copied"}}" hidden>{{t "propose.copy"}}</button><span id="pr-title-copied" class="copied" role="status"></span></div>
+<label for="pr-body" class="small muted">{{t "propose.pr_body_label"}}</label>
+<textarea id="pr-body" class="control copy-source" readonly rows="10">{{.PRBody}}</textarea>
+<div class="copy-row"><button type="button" class="btn-small" data-copy="pr-body" data-copied="{{t "propose.copied"}}" hidden>{{t "propose.copy"}}</button><span id="pr-body-copied" class="copied" role="status"></span></div>
+</div>
+<p class="notice-text">{{t "propose.no_write"}}</p>
+</section>
+{{end}}
+{{end}}

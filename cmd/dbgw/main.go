@@ -14,6 +14,8 @@ import (
 
 	"github.com/kyosu-1/dbgateway/internal/cli"
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
+	"github.com/kyosu-1/dbgateway/internal/server"
+	"github.com/kyosu-1/dbgateway/internal/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -41,6 +43,11 @@ type exitError int
 
 func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
+func init() {
+	// `dbgw passkey enroll` opens the same management database as the server.
+	web.OpenStore = server.OpenStore
+}
+
 func newRoot() *cobra.Command {
 	mcpserver.Version = version
 	root := &cobra.Command{
@@ -61,6 +68,7 @@ func newRoot() *cobra.Command {
 		cli.TokenCmd(),
 		cli.MCPCmd(),
 		cli.QueryCmd(), cli.ExplainCmd(), cli.DatabasesCmd(), cli.SearchCmd(), cli.RequestsCmd(), cli.RequestCmd(),
+		web.PasskeyCmd(),
 	)
 	return root
 }

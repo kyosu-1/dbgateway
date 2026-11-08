@@ -1,0 +1,35 @@
+{{define "content"}}
+<main class="card card-narrow">
+<div class="stack-14">
+<span class="client-icon">{{template "icon-shield"}}</span>
+<h1>{{t "stepup.heading"}}</h1>
+<p class="small muted">{{t "stepup.lead" .Email (fmtDuration .MaxAge)}}</p>
+</div>
+{{if .Fresh}}<p class="status status-success" role="status">{{template "icon-check"}}<span>{{t "stepup.fresh"}} <a href="{{.Next}}">{{t "stepup.continue"}}</a></span></p>{{end}}
+{{if .Passkey}}
+<div class="stack-8">
+<div class="webauthn" hidden>
+<button type="button" class="btn btn-primary btn-block" data-webauthn="get" data-begin="/passkeys/stepup/begin" data-finish="{{.Finish}}" data-csrf="{{.CSRF}}" data-status="stepup-status" data-msg-working="{{t "passkey.working"}}" data-msg-error="{{t "passkey.error_failed"}}" data-msg-unsupported="{{t "passkey.unsupported"}}">{{template "icon-key"}}{{t "stepup.passkey"}}</button>
+</div>
+<p id="stepup-status" class="webauthn-status" role="status" aria-live="polite"></p>
+<noscript><p class="hint">{{t "passkey.noscript"}}</p></noscript>
+</div>
+{{end}}
+{{if .IdP}}
+<div class="stack-6">
+<a class="btn {{if .Passkey}}btn-secondary{{else}}btn-primary{{end}} btn-block" href="{{.IdPURL}}">{{template "icon-lock"}}{{t "stepup.idp"}}</a>
+<p class="hint">{{t "stepup.idp_note" .IdPHost}}</p>
+</div>
+{{end}}
+{{if .Dev}}
+<form method="post" action="/stepup/dev" class="stack-8 card-dev-inline">
+<div class="note-warn-box" role="note">{{template "icon-warning"}}<span>{{t "stepup.dev_note"}}</span></div>
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<button type="submit" class="btn btn-secondary">{{t "stepup.dev"}}</button>
+</form>
+{{end}}
+{{if .NoMethod}}<p class="alert alert-warn">{{t "stepup.no_method"}}</p>{{end}}
+<a class="inline-link small" href="{{.Next}}">{{t "stepup.cancel"}}</a>
+</main>
+{{end}}

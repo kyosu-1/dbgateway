@@ -10,10 +10,23 @@
 <p class="hint">{{t "login.sso_note" .IdPHost}}</p>
 </section>
 {{end}}
+{{if .Passkey}}
+<section class="card" aria-labelledby="h-passkey">
+<div class="stack-6">
+{{if .SSOURL}}<h2 id="h-passkey">{{t "login.passkey_heading"}}</h2>{{else}}<h1 id="h-passkey">{{t "login.heading"}}</h1>{{end}}
+<p class="small muted">{{t "login.passkey_lead"}}</p>
+</div>
+<div class="webauthn" hidden>
+<button type="button" class="btn {{if .SSOURL}}btn-secondary{{else}}btn-primary{{end}} btn-block" data-webauthn="get" data-begin="/passkeys/login/begin" data-finish="{{.PasskeyFinish}}" data-status="passkey-status" data-msg-working="{{t "passkey.working"}}" data-msg-error="{{t "passkey.error_failed"}}" data-msg-unsupported="{{t "passkey.unsupported"}}">{{template "icon-key"}}{{t "login.passkey"}}</button>
+</div>
+<p id="passkey-status" class="webauthn-status" role="status" aria-live="polite"></p>
+<noscript><p class="hint">{{t "passkey.noscript"}}</p></noscript>
+</section>
+{{end}}
 {{if .Dev}}
 <section class="card card-dev" aria-labelledby="h-dev">
 <div class="note-warn-box" role="note">{{template "icon-warning"}}<span><strong>{{t "login.dev_title_warning"}}</strong>{{t "login.dev_warning"}}</span></div>
-{{if .SSOURL}}<h2 id="h-dev">{{t "login.dev_heading"}}</h2>{{else}}<h1 id="h-dev">{{t "login.dev_heading"}}</h1>{{end}}
+{{if or .SSOURL .Passkey}}<h2 id="h-dev">{{t "login.dev_heading"}}</h2>{{else}}<h1 id="h-dev">{{t "login.dev_heading"}}</h1>{{end}}
 {{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
 <form method="post" action="/login" class="stack-12">
 <input type="hidden" name="csrf" value="{{.CSRF}}">

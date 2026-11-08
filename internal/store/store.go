@@ -1,6 +1,6 @@
 // Package store is the management database of dbgateway: users, browser
 // sessions, OAuth clients, authorization and device codes, tokens, approval
-// requests and break-glass grants.
+// requests, break-glass grants, passkeys and WebAuthn ceremonies.
 //
 // Secrets (tokens, codes, session IDs) are never stored. Callers pass the
 // SHA-256 hash of the secret (see HashSecret) and look rows up by that hash.
@@ -49,6 +49,10 @@ type Session struct {
 	Email     string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+	// StepUpMethod and StepUpAt record the last re-authentication on this
+	// session ("passkey", "idp" or "dev"); empty/nil if none.
+	StepUpMethod string
+	StepUpAt     *time.Time
 }
 
 // Client is an OAuth client registered with Dynamic Client Registration.
@@ -197,11 +201,12 @@ type Store interface {
 	// RevokeFamily revokes every token of a family and their descendants.
 	RevokeFamily(ctx context.Context, familyID string, now time.Time) (int64, error)
 
-	// DeleteExpired removes sessions, codes and tokens that expired before
-	// the given time. It returns the number of rows removed.
+	// DeleteExpired removes sessions, codes, tokens, passkey enrollment
+	// links and WebAuthn ceremonies that expired before the given time. It returns the number of rows removed.
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 
 	ApprovalStore
+	WebStore
 
 	Close() error
 }

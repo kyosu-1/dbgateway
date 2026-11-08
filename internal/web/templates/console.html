@@ -1,0 +1,117 @@
+{{define "content"}}
+<h1 class="visually-hidden">{{t "console.heading"}}</h1>
+<div class="console">
+<aside class="console-side" aria-label="{{t "console.schema"}}">
+<h2 class="schema-db">{{.DB.Name}}</h2>
+<form method="get" action="/console" class="stack-8" role="search">
+<input type="hidden" name="db" value="{{.DB.Name}}">
+<label class="visually-hidden" for="schema-search">{{t "console.schema_search"}}</label>
+<input id="schema-search" name="q" type="search" class="control" value="{{.Form.Search}}" placeholder="{{t "console.schema_search"}}">
+</form>
+{{if .SchemaError}}<p class="small muted">{{t "console.schema_error"}}</p>
+{{else if .Objects}}
+<div class="schema">
+{{range .Objects}}
+<details>
+<summary>{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}</summary>
+<ul>
+{{range .Columns}}<li><span class="col-name">{{.Name}}{{if .Masked}}<span role="img" aria-label="{{t "console.masked_column"}}" title="{{t "console.masked_column"}}">{{template "icon-lock-small"}}</span>{{end}}</span><span class="col-type">{{.Type}}</span></li>
+{{end}}
+</ul>
+</details>
+{{end}}
+{{if .ObjectsTruncated}}<p class="small muted">{{t "console.schema_truncated"}}</p>{{end}}
+</div>
+{{else}}<p class="small muted">{{t "console.schema_empty"}}</p>{{end}}
+</aside>
+
+<div class="console-main">
+<form method="post" action="/console" class="editor" aria-label="{{t "console.query"}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="editor-top">
+<label for="db-run" class="small muted">{{t "console.database"}}</label>
+<select id="db-run" name="db" class="control">
+{{range .Databases}}<option value="{{.Name}}"{{if eq .Name $.DB.Name}} selected{{end}}>{{.Name}}</option>{{end}}
+</select>
+</div>
+<label class="visually-hidden" for="sql-editor">SQL</label>
+<textarea id="sql-editor" name="sql" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" required placeholder="SELECT ...">{{.Form.SQL}}</textarea>
+<div class="editor-bar">
+<label class="visually-hidden" for="sql-reason">{{t "console.reason"}}</label>
+<input id="sql-reason" name="reason" type="text" class="control grow" value="{{.Form.Reason}}" maxlength="500" placeholder="{{t "console.reason_placeholder"}}">
+<button type="submit" name="action" value="explain" class="btn btn-secondary btn-sm" formnovalidate>{{t "console.explain"}}</button>
+<button type="submit" name="action" value="run" class="btn btn-primary btn-sm">{{template "icon-play"}}{{t "console.run"}}</button>
+</div>
+</form>
+
+<p class="notice-text">{{t "console.limits" .MaxRows (fmtDuration .Timeout)}}{{if .CanWrite}} {{t "console.writes_need_approval"}}{{end}}</p>
+
+{{with .Result}}
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+{{if .ExplainError}}<p class="alert alert-error" role="alert">{{.ExplainError}}</p>{{end}}
+
+{{with .Exec}}
+{{if eq .Status "ok"}}
+<section class="result" aria-labelledby="h-result">
+<div class="result-head">
+<h2 id="h-result">{{if .RowsAffected}}{{t "console.rows_affected" (deref64 .RowsAffected)}}{{else}}{{t "console.rows" .RowCount}}{{end}}</h2>
+<span class="small muted">{{t "decision.allow"}}{{if .Rule}} ({{.Rule}}){{end}}{{if $.IsAuditor}} · <a href="/audit/{{.RequestID}}">{{.RequestID}}</a>{{else}} · <span class="mono">{{.RequestID}}</span>{{end}}</span>
+</div>
+{{if .BreakGlass}}<div class="result-body"><p class="alert alert-warn">{{t "console.break_glass_used"}}</p></div>{{end}}
+{{with $.Result.Table}}<div class="table-wrap">{{template "datatable" .}}</div>{{end}}
+{{if .Hint}}<div class="result-body"><p class="notice-text">{{.Hint}}</p></div>{{end}}
+</section>
+{{else if eq .Status "pending"}}
+<section class="result" aria-labelledby="h-result">
+<div class="result-head"><h2 id="h-result">{{t "console.pending_heading"}}</h2>{{template "pill" (dict "Key" "status.pending" "Tone" "accent")}}</div>
+<div class="result-body">
+<p>{{t "console.pending_lead"}}</p>
+{{if .Approvers}}<p class="small muted">{{t "approval.approvers" (join .Approvers ", ")}}</p>{{end}}
+{{with .ExpiresAt}}<p class="small muted">{{t "console.pending_expires" (fmtTime .)}}</p>{{end}}
+<p><a class="btn btn-secondary btn-sm btn-link" href="{{$.PendingURL}}">{{t "console.pending_open"}}</a></p>
+</div>
+</section>
+{{else if eq .Status "denied"}}
+<section class="result" aria-labelledby="h-result">
+<div class="result-head"><h2 id="h-result">{{t "console.denied_heading"}}</h2>{{template "pill" (dict "Key" "decision.deny" "Tone" "danger")}}</div>
+<div class="result-body">
+<p class="reason-text">{{.Reason}}</p>
+{{if .Hint}}<p class="small"><strong>{{t "console.hint"}}</strong> <span class="reason-text">{{.Hint}}</span></p>{{end}}
+{{if .Rule}}<p class="small muted">{{t "console.rule" .Rule}}</p>{{end}}
+</div>
+</section>
+{{else}}
+<section class="result" aria-labelledby="h-result">
+<div class="result-head"><h2 id="h-result">{{t "console.error_heading"}}</h2>{{template "pill" (dict "Key" "decision.error" "Tone" "danger")}}</div>
+<div class="result-body">
+<p class="reason-text">{{.Reason}}</p>
+{{if .Code}}<p class="small muted mono">SQLSTATE {{.Code}}</p>{{end}}
+</div>
+</section>
+{{end}}
+{{end}}
+
+{{with .Explain}}
+<section class="result" aria-labelledby="h-explain">
+<div class="result-head"><h2 id="h-explain">{{t "console.explain_heading"}}</h2>{{template "pill" $.ExplainPill}}</div>
+<div class="result-body">
+<dl class="tech">
+{{if .Rule}}<div><dt>{{t "console.explain_rule"}}</dt><dd><code>{{.Rule}}</code>{{if .Stage}} ({{.Stage}}){{end}}</dd></div>{{end}}
+{{with .Statement}}<div><dt>{{t "console.explain_statement"}}</dt><dd>{{.Kind}}{{if .Tables}} · {{join .Tables ", "}}{{end}}</dd></div>{{end}}
+{{with .Estimate}}<div><dt>{{t "console.explain_estimate"}}</dt><dd>{{t "console.explain_estimate_value" (printf "%.0f" .Rows)}}</dd></div>{{end}}
+{{if .Risk}}<div><dt>{{t "approval.risk"}}</dt><dd>{{t (printf "risk.%s" .Risk)}}</dd></div>{{end}}
+{{if .ApprovalRule}}<div><dt>{{t "approval.rule"}}</dt><dd><code>{{.ApprovalRule}}</code>{{if .ExpireAfter}} · {{t "console.explain_expire" .ExpireAfter}}{{end}}</dd></div>{{end}}
+{{if .MaxAffectedRows}}<div><dt>{{t "approval.limit"}}</dt><dd>{{t "approval.limit_value" .MaxAffectedRows}}</dd></div>{{end}}
+{{if .Approvers}}<div><dt>{{t "console.explain_approvers"}}</dt><dd>{{join .Approvers ", "}}</dd></div>{{end}}
+{{if .BreakGlass}}<div><dt>{{t "nav.breakglass"}}</dt><dd>{{t "console.explain_break_glass"}}</dd></div>{{end}}
+{{if .Output}}<div><dt>{{t "console.explain_output"}}</dt><dd class="mono">{{range $i, $o := .Output}}{{if $i}}, {{end}}{{$o.Name}}{{if $o.Masked}} ({{t "table.masked"}}){{else if $o.Withheld}} ({{t "table.withheld"}}){{end}}{{end}}</dd></div>{{end}}
+</dl>
+{{if .Reason}}<p class="reason-text">{{.Reason}}</p>{{end}}
+{{if .Hint}}<p class="small"><strong>{{t "console.hint"}}</strong> <span class="reason-text">{{.Hint}}</span></p>{{end}}
+</div>
+</section>
+{{end}}
+{{end}}
+</div>
+</div>
+{{end}}

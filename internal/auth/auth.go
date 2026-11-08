@@ -15,17 +15,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
+	"github.com/kyosu-1/dbgateway/internal/approval"
 	"github.com/kyosu-1/dbgateway/internal/config"
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/store"
-	"github.com/kyosu-1/dbgateway/internal/web/i18n"
+	"github.com/kyosu-1/dbgateway/internal/web/ui"
 )
 
 const (
@@ -48,7 +50,7 @@ const (
 	deviceInterval    = 5 * time.Second
 	refreshFamilyTTL  = 7 * 24 * time.Hour
 	loginStateTTL     = 10 * time.Minute
-	maxFormBytes      = 64 << 10
+	maxFormBytes      = ui.MaxFormBytes
 	sessionCookieName = "dbgw_session"
 	loginCookieName   = "dbgw_login"
 )
@@ -59,6 +61,8 @@ type Options struct {
 	Store  store.Store
 	RBAC   *policy.RBAC
 	Logger *slog.Logger
+	// Now defaults to time.Now (tests).
+	Now func() time.Time
 }
 
 // Server is the authorization server and token verifier.
@@ -71,9 +75,15 @@ type Server struct {
 	secure bool   // public URL is https: set Secure on cookies
 	oidc   *oidcLogin
 	cimd   *cimdFetcher
-	pages  map[string]*template.Template
-	i18n   *i18n.Catalog
-	now    func() time.Time
+	ui     *ui.Renderer
+	// wa is the WebAuthn relying party; nil when server.public_url has no
+	// host name usable as a relying party ID (passkeys are then disabled).
+	wa  *webauthn.WebAuthn
+	now func() time.Time
+
+	// Optional hooks set during setup (see SetApprovals, SetSlackLinker).
+	approvals *approval.Service
+	slack     SlackLinker
 }
 
 // New returns a Server. It does not contact the IdP; OIDC discovery happens
@@ -92,8 +102,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return nil, fmt.Errorf("auth: invalid server.public_url %q", cfg.Server.PublicURL)
 	}
-	pages, err := parsePages()
-	if err != nil {
+	rd := ui.New(ui.Options{DevMode: cfg.Auth.DevLogin, Logger: log})
+	if err := addPages(rd); err != nil {
 		return nil, err
 	}
 	s := &Server{
@@ -104,9 +114,17 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		issuer: issuer,
 		secure: u.Scheme == "https",
 		cimd:   newCIMDFetcher(cfg.Auth.AllowInsecureClientMetadata),
-		pages:  pages,
-		i18n:   i18n.Default(),
+		ui:     rd,
 		now:    time.Now,
+	}
+	if opts.Now != nil {
+		s.now = opts.Now
+	}
+	if s.wa, err = newRelyingParty(issuer); err != nil {
+		if cfg.Auth.Passkeys {
+			return nil, err
+		}
+		log.Info("auth: passkeys are unavailable", "reason", err.Error())
 	}
 	if cfg.Auth.OIDC != nil {
 		o, err := newOIDCLogin(cfg.Auth.OIDC, issuer+"/oidc/callback")
@@ -118,8 +136,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if cfg.Auth.DevLogin {
 		log.Warn("auth: dev_login is enabled; anyone can log in as any email. Never use this in production.")
 	}
-	if s.oidc == nil && !cfg.Auth.DevLogin {
-		return nil, errors.New("auth: no login method configured (auth.oidc or auth.dev_login)")
+	if s.oidc == nil && !cfg.Auth.DevLogin && !cfg.Auth.Passkeys {
+		return nil, errors.New("auth: no login method configured (auth.oidc, auth.passkeys or auth.dev_login)")
 	}
 	return s, nil
 }
@@ -164,39 +182,34 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("GET /oidc/callback", s.page(s.handleOIDCCallback))
 	mux.Handle("GET /account", s.page(s.handleAccount))
 	mux.Handle("POST /account/revoke", s.page(s.handleAccountRevoke))
+	mux.Handle("POST /account/passkeys/delete", s.page(s.handlePasskeyDelete))
+	mux.Handle("POST /account/slack/link", s.page(s.handleSlackLink))
+	mux.Handle("POST /account/slack/unlink", s.page(s.handleSlackUnlink))
 	mux.Handle("POST /logout", s.page(s.handleLogout))
-	mux.Handle("GET /static/dbgw.css", securityHeaders(http.HandlerFunc(serveCSS)))
-}
 
-// securityHeaders sets headers that every response should carry.
-func securityHeaders(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hd := w.Header()
-		// No form-action: the consent form legitimately redirects to the
-		// client's redirect_uri.
-		hd.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-		hd.Set("X-Frame-Options", "DENY")
-		hd.Set("X-Content-Type-Options", "nosniff")
-		hd.Set("Referrer-Policy", "no-referrer")
-		h.ServeHTTP(w, r)
-	})
+	// Step-up authentication.
+	mux.Handle("GET /stepup", s.page(s.handleStepUpPage))
+	mux.Handle("GET /stepup/idp", s.page(s.handleStepUpIdP))
+	mux.Handle("POST /stepup/dev", s.page(s.handleStepUpDev))
+
+	// Passkeys: WebAuthn ceremonies (JSON, called by /static/webauthn.js)
+	// and enrollment links.
+	for _, purpose := range []string{purposeLogin, purposeRegister, purposeStepUp, purposeEnroll} {
+		mux.Handle("POST /passkeys/"+purpose+"/begin", s.page(s.passkeyBegin(purpose)))
+		mux.Handle("POST /passkeys/"+purpose+"/finish", s.page(s.passkeyFinish(purpose)))
+	}
+	mux.Handle("GET /passkeys/enroll/{token}", s.page(s.handleEnrollLink))
+	mux.Handle("GET /passkeys/enroll", s.page(s.handleEnrollPage))
+
+	ui.RegisterStatic(mux)
 }
 
 // page wraps an HTML handler.
-func (s *Server) page(h http.HandlerFunc) http.Handler {
-	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if s.i18n.SwitchLanguage(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-		h(w, r)
-	}))
-}
+func (s *Server) page(h http.HandlerFunc) http.Handler { return s.ui.Wrap(h) }
 
 // cors wraps a public JSON endpoint.
 func (s *Server) cors(h http.Handler) http.Handler {
-	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return ui.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version")

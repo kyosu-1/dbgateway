@@ -1,0 +1,77 @@
+{{define "content"}}
+{{template "back" (dict "Href" "/audit" "Label" (t "audit.heading"))}}
+
+<div class="detail-head">
+<div class="pills">{{template "pill" .Decision}}</div>
+<h1>{{.Title}}</h1>
+<p>{{fmtTime .Time}} · {{.Sub}}</p>
+</div>
+
+<article class="article">
+{{if eq .E.Decision "deny"}}
+<section aria-labelledby="h-why">
+<h2 id="h-why">{{t "audit.denied_heading"}}</h2>
+<p>{{t "audit.denied_by" .E.Rule .E.Stage}}</p>
+</section>
+{{end}}
+
+{{if .E.SQL}}
+<section aria-labelledby="h-sql">
+<h2 id="h-sql">SQL <span class="h-note">· {{if .RawLogged}}{{t "audit.sql_raw"}}{{else}}{{t "audit.sql_redacted"}}{{end}}</span></h2>
+{{template "sql" .SQL}}
+</section>
+{{end}}
+
+{{if .Reason}}
+<section aria-labelledby="h-reason">
+<h2 id="h-reason">{{t "approval.reason_heading"}} <span class="h-note">· {{if .Agent}}{{t "approval.reason_agent"}}{{else}}{{t "approval.reason_human"}}{{end}}</span></h2>
+<p class="reason-text" dir="auto">{{.Reason}}</p>
+</section>
+{{end}}
+
+{{with .E.Result}}
+<section aria-labelledby="h-result">
+<h2 id="h-result">{{t "audit.result_heading"}}</h2>
+{{if $.ResultError}}<p class="alert alert-error">{{$.ResultError}}</p>{{end}}
+<dl class="tech">
+<div><dt>{{t "audit.result_rows"}}</dt><dd>{{.Rows}}</dd></div>
+<div><dt>{{t "audit.result_duration"}}</dt><dd>{{.DurationMS}} ms</dd></div>
+{{if .MaskedColumns}}<div><dt>{{t "audit.result_masked"}}</dt><dd class="mono">{{join .MaskedColumns ", "}}</dd></div>{{end}}
+{{if .Truncated}}<div><dt>{{t "audit.result_truncated"}}</dt><dd>{{t "audit.yes"}}</dd></div>{{end}}
+</dl>
+</section>
+{{end}}
+
+{{if gt (len .Timeline) 1}}
+<section aria-labelledby="h-timeline">
+<h2 id="h-timeline">{{t "audit.timeline_heading"}}</h2>
+<ol class="steps">
+{{range .Timeline}}
+<li><span class="step-body"><span>{{template "pill" .Decision}} {{.Title}}</span><span class="li-sub">{{fmtTime .Time}} · {{.Actor}}</span></span></li>
+{{end}}
+</ol>
+{{with .Approval}}<p><a class="small" href="{{.}}">{{t "audit.approval_link"}}</a></p>{{end}}
+</section>
+{{end}}
+
+<section aria-labelledby="h-tech">
+<details>
+<summary id="h-tech" class="summary-strong">{{t "audit.tech_heading"}}</summary>
+<dl class="tech">
+<div><dt>{{t "audit.event"}}</dt><dd class="mono">{{.E.Event}}</dd></div>
+{{if .E.Rule}}<div><dt>{{t "audit.rule"}}</dt><dd class="mono">{{.E.Rule}}</dd></div>{{end}}
+<div><dt>{{t "approval.request_id"}}</dt><dd class="mono">{{.E.RequestID}}</dd></div>
+{{if .E.TraceID}}<div><dt>{{t "audit.trace_id"}}</dt><dd class="mono">{{.E.TraceID}}</dd></div>{{end}}
+{{if .E.Principal.ClientID}}<div><dt>{{t "audit.client"}}</dt><dd class="mono">{{.E.Principal.ClientID}}{{with .E.Principal.ClientName}} ({{.}}){{end}}</dd></div>{{end}}
+<div><dt>{{t "approval.config_version"}}</dt><dd class="mono">{{.E.ConfigVersion}}</dd></div>
+{{if .E.SQLSHA256}}<div><dt>{{t "audit.sql_hash"}}</dt><dd class="mono">{{.E.SQLSHA256}}</dd></div>{{end}}
+<div><dt>{{t "audit.hash"}}</dt><dd class="mono">{{.E.Hash}}</dd></div>
+<div><dt>{{t "audit.prev_hash"}}</dt><dd class="mono">{{.E.PrevHash}}</dd></div>
+{{range .Extra}}<div><dt class="mono">{{.Key}}</dt><dd>{{.Value}}</dd></div>{{end}}
+</dl>
+</details>
+</section>
+</article>
+
+<a class="small" href="{{.MoreURL}}">{{if .Agent}}{{t "audit.more_agent"}}{{else}}{{t "audit.more_human"}}{{end}}</a>
+{{end}}

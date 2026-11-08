@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="page-title">
+<h1>{{t "users.heading"}}</h1>
+<p>{{if .IdP}}{{t "users.lead_idp"}}{{else}}{{t "users.lead"}}{{end}}</p>
+</div>
+
+<form method="get" action="/users" class="filters" role="search" aria-label="{{t "users.filters"}}">
+<label class="grow" for="u-search"><span class="visually-hidden">{{t "users.search"}}</span><input id="u-search" name="q" type="search" class="control" value="{{.Q}}" placeholder="{{t "users.search_placeholder"}}"></label>
+<label for="u-group"><span class="visually-hidden">{{t "users.group"}}</span><select id="u-group" name="group" class="control"><option value="">{{t "users.any_group"}}</option>{{range .Groups}}<option value="{{.}}"{{if eq . $.Group}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<button type="submit" class="btn btn-secondary btn-sm">{{t "audit.search"}}</button>
+</form>
+
+{{if .Users}}
+<ul class="list">
+{{range .Users}}
+<li>
+<a class="list-item" href="/users/{{.Email}}">
+<span class="avatar avatar-{{avatar .Email}}" aria-hidden="true">{{initials .Email}}</span>
+<span class="li-main">
+<span class="li-title">{{.Email}}{{if not .Active}} <span class="pill pill-warning">{{t "users.inactive"}}</span>{{end}}</span>
+<span class="li-sub">{{if .Groups}}{{join .Groups ", "}}{{else}}{{t "account.groups_none"}}{{end}}{{if .Admin}} · {{t "users.admin"}}{{end}}</span>
+</span>
+<span class="li-end">{{with .LastLogin}}{{t "users.last_login" (fmtTime .)}}{{else}}{{t "users.never"}}{{end}}</span>
+{{template "chevron"}}
+</a>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="list list-empty">{{t "users.empty"}}</p>
+{{end}}
+{{end}}

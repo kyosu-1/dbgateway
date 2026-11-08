@@ -86,6 +86,9 @@ type Config struct {
 	Notifications        []NotificationRoute `yaml:"notifications"`
 	NotificationSettings `yaml:",inline"`
 
+	// Auditors may use the audit log and user screens (see web.go).
+	Auditors []Auditor `yaml:"auditors"`
+
 	// Version identifies the loaded file contents (short SHA-256). It is
 	// recorded in every audit log entry.
 	Version string `yaml:"-"`
@@ -100,8 +103,12 @@ type Server struct {
 }
 
 type Auth struct {
-	OIDC        *OIDC       `yaml:"oidc"`
-	Passkeys    bool        `yaml:"passkeys"` // phase 2
+	OIDC *OIDC `yaml:"oidc"`
+	// Passkeys enables signing in with a passkey on the login page and
+	// passkey enrollment links (`dbgw passkey enroll`), so that dbgateway
+	// can run without an IdP. Registering passkeys on the account page and
+	// using them for step-up authentication works regardless.
+	Passkeys    bool        `yaml:"passkeys"`
 	AgentTokens AgentTokens `yaml:"agent_tokens"`
 	// CLITokenTTL is the lifetime of human tokens issued to `dbgw login`.
 	CLITokenTTL Duration `yaml:"cli_token_ttl"`
@@ -402,8 +409,8 @@ func (c *Config) validate() error {
 	if c.Auth.DevLogin && !isLoopbackListen(c.Server.Listen) {
 		add("auth.dev_login: only allowed when server.listen is a loopback address")
 	}
-	if c.Auth.OIDC == nil && !c.Auth.DevLogin {
-		add("auth: configure auth.oidc (or auth.dev_login for local development)")
+	if c.Auth.OIDC == nil && !c.Auth.DevLogin && !c.Auth.Passkeys {
+		add("auth: configure auth.oidc or auth.passkeys (or auth.dev_login for local development)")
 	}
 	if o := c.Auth.OIDC; o != nil {
 		if o.Issuer == "" || o.ClientIDEnv == "" {
@@ -411,7 +418,12 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Auth.Passkeys {
-		c.warn("auth.passkeys: passkeys are planned for phase 2 and are ignored")
+		if u, err := url.Parse(c.Server.PublicURL); err == nil && net.ParseIP(u.Hostname()) != nil {
+			add("auth.passkeys: server.public_url must use a host name, not an IP address (WebAuthn relying party IDs cannot be IP addresses)")
+		}
+		if c.Auth.OIDC != nil {
+			c.warn("auth.passkeys: passkey sign-in bypasses the IdP; users removed from the IdP keep signing in with passkeys unless SCIM deactivates them")
+		}
 	}
 	if c.Auth.AgentTokens.MaxTTL.D() > 24*time.Hour {
 		add("auth.agent_tokens.max_ttl: must be at most 24h")
@@ -595,6 +607,7 @@ func (c *Config) validate() error {
 	c.validatePGProxy(add)
 	c.validateApprovals(groupNames, dbNames, add)
 	c.validateNotifications(add)
+	c.validateAuditors(groupNames, add)
 	c.SCIM.validate(c, add)
 	c.PIIDetection.validate(add)
 	return errors.Join(errs...)

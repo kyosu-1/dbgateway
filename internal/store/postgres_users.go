@@ -61,12 +61,13 @@ func (s *Postgres) CreateSession(ctx context.Context, sess *Session) error {
 // the caller.
 func (s *Postgres) GetSession(ctx context.Context, idHash string) (*Session, error) {
 	var sess Session
-	err := s.pool.QueryRow(ctx, `SELECT id_hash, email, created_at, expires_at FROM sessions WHERE id_hash = $1`, idHash).
-		Scan(&sess.IDHash, &sess.Email, &sess.CreatedAt, &sess.ExpiresAt)
+	var stepUpAt *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT id_hash, email, created_at, expires_at, step_up_method, step_up_at FROM sessions WHERE id_hash = $1`, idHash).
+		Scan(&sess.IDHash, &sess.Email, &sess.CreatedAt, &sess.ExpiresAt, &sess.StepUpMethod, &stepUpAt)
 	if err != nil {
 		return nil, pgNotFound(err)
 	}
-	sess.CreatedAt, sess.ExpiresAt = fromPGTime(sess.CreatedAt), fromPGTime(sess.ExpiresAt)
+	sess.CreatedAt, sess.ExpiresAt, sess.StepUpAt = fromPGTime(sess.CreatedAt), fromPGTime(sess.ExpiresAt), fromPGNullTime(stepUpAt)
 	return &sess, nil
 }
 

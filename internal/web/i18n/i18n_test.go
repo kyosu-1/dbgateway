@@ -111,6 +111,9 @@ func TestPrinter(t *testing.T) {
 			t.Errorf("ja.Duration(%v) = %q", d, got)
 		}
 	}
+	if got := ja.Duration(10 * time.Second); got != "10秒" {
+		t.Errorf("ja.Duration(10s) = %q", got)
+	}
 	if got := en.Duration(90 * time.Minute); got != "1 hour 30 minutes" {
 		t.Errorf("en.Duration = %q", got)
 	}

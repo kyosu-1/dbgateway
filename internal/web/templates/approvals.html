@@ -1,0 +1,35 @@
+{{define "content"}}
+<div class="page-head">
+<div class="page-title">
+<h1>{{t "approvals.heading"}}</h1>
+<p>{{t "approvals.lead"}}</p>
+</div>
+{{if .BreakGlass}}<a class="btn-small btn-link btn-danger-text" href="/breakglass">{{t "approvals.breakglass_link"}}</a>{{end}}
+</div>
+
+<nav class="tabs" aria-label="{{t "approvals.tabs"}}">
+<a href="/approvals"{{if eq .Tab "awaiting"}} aria-current="page"{{end}}>{{t "approvals.tab_awaiting"}}<span class="count">{{.AwaitingCount}}</span></a>
+<a href="/approvals?tab=decided"{{if eq .Tab "decided"}} aria-current="page"{{end}}>{{t "approvals.tab_decided"}}</a>
+</nav>
+
+{{if .Rows}}
+<ul class="list">
+{{range .Rows}}
+<li>
+<a class="list-item" href="{{.Href}}">
+<span class="{{if eq $.Tab "awaiting"}}li-lead{{else}}li-status{{end}}">{{if eq $.Tab "awaiting"}}{{template "pill" .Risk}}{{else}}{{template "pill" .Status}}{{end}}</span>
+<span class="li-main">
+<span class="li-title">{{.Title}}</span>
+<span class="li-sub">{{.Sub}}</span>
+</span>
+<span class="li-meta">{{.Database}}</span>
+<span class="li-end">{{.When}}</span>
+{{template "chevron"}}
+</a>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="list list-empty">{{if eq .Tab "awaiting"}}{{t "approvals.empty_awaiting"}}{{else}}{{t "approvals.empty_decided"}}{{end}}</p>
+{{end}}
+{{end}}
