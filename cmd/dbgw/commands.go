@@ -145,20 +145,38 @@ func auditCmd() *cobra.Command {
 	verify := &cobra.Command{
 		Use:   "verify",
 		Short: "Verify the hash chain of the audit log; exits 1 if it was tampered with",
-		Args:  cobra.NoArgs,
+		Long: "Verify the hash chain of the audit log: the files in --dir, or the output selected by the\n" +
+			"configuration (audit.dir for audit.output: file, the audit_log table for audit.output: postgres).",
+		Args: cobra.NoArgs,
 	}
 	dir := verify.Flags().String("dir", "", "audit directory (default: audit.dir from the configuration)")
 	path := configFlag(verify, false)
 	verify.RunE = func(cmd *cobra.Command, _ []string) error {
 		d := *dir
+		where := ""
+		var rep *audit.VerifyReport
+		var err error
 		if d == "" {
-			cfg, err := config.Load(*path)
-			if err != nil {
-				return fmt.Errorf("pass --dir or a valid --config: %w", err)
+			cfg, lerr := config.Load(*path)
+			if lerr != nil {
+				return fmt.Errorf("pass --dir or a valid --config: %w", lerr)
 			}
 			d = cfg.Audit.Dir
+			if cfg.Audit.Output == config.AuditOutputPostgres {
+				dsn, derr := cfg.AuditDSN()
+				if derr != nil {
+					return derr
+				}
+				where = "the PostgreSQL audit log"
+				rep, err = audit.VerifyPostgres(cmd.Context(), dsn)
+			}
 		}
-		rep, err := audit.VerifyDir(d)
+		if where == "" {
+			rep, err = audit.VerifyDir(d)
+			if rep != nil {
+				where = fmt.Sprintf("%d files", rep.Files)
+			}
+		}
 		if err != nil {
 			fmt.Printf("FAILED: %v\n", err)
 			if rep != nil {
@@ -170,7 +188,7 @@ func auditCmd() *cobra.Command {
 		if rep.StartedFromCheckpoint {
 			from = "a retention checkpoint"
 		}
-		fmt.Printf("ok: %d entries in %d files, chained from %s; last hash %s\n", rep.Entries, rep.Files, from, rep.LastHash)
+		fmt.Printf("ok: %d entries in %s, chained from %s; last hash %s\n", rep.Entries, where, from, rep.LastHash)
 		return nil
 	}
 	cmd.AddCommand(verify)

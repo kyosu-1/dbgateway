@@ -34,9 +34,9 @@ import (
 
 // Server is a running dbgateway instance.
 type Server struct {
-	cfg     *config.Config
-	logger  *slog.Logger
-	handler http.Handler
+	cfg       *config.Config
+	logger    *slog.Logger
+	handler   http.Handler
 	closers   []func()
 	auth      *auth.Server
 	pgproxy   *pgproxy.Server   // nil when disabled
@@ -74,9 +74,9 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	}
 	s.closers = append(s.closers, gw.Close)
 
-	st, err := store.OpenSQLite(ctx, cfg.Store.Path)
+	st, err := openStore(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("store: %w", err)
+		return nil, err
 	}
 	s.closers = append(s.closers, func() { _ = st.Close() })
 
@@ -129,13 +129,51 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	return s, nil
 }
 
+// managementStore is the management database: the store and the SCIM
+// persistence, implemented by every backend.
+type managementStore interface {
+	store.Store
+	scim.Store
+}
+
+// openStore opens the management database selected by store.driver.
+func openStore(ctx context.Context, cfg *config.Config) (managementStore, error) {
+	if cfg.Store.Driver == config.StorePostgres {
+		dsn, err := cfg.StoreDSN()
+		if err != nil {
+			return nil, err
+		}
+		st, err := store.OpenPostgres(ctx, dsn)
+		if err != nil {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		return st, nil
+	}
+	st, err := store.OpenSQLite(ctx, cfg.Store.Path)
+	if err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	return st, nil
+}
+
 // openAuditSink opens the primary audit sink and, when configured, wraps it
 // with best-effort forwarders (OTLP). Only the primary decides success.
 func openAuditSink(ctx context.Context, cfg *config.Config, logger *slog.Logger) (audit.Sink, error) {
 	var primary audit.Sink
-	if cfg.Audit.Output == "stdout" {
+	var pgSink *audit.PostgresSink
+	switch cfg.Audit.Output {
+	case config.AuditOutputStdout:
 		primary = audit.NewStdoutSink(os.Stdout)
-	} else {
+	case config.AuditOutputPostgres:
+		dsn, err := cfg.AuditDSN()
+		if err != nil {
+			return nil, err
+		}
+		if pgSink, err = audit.OpenPostgresSink(ctx, dsn, cfg.Audit.Retention.D(), logger); err != nil {
+			return nil, err
+		}
+		primary = pgSink
+	default:
 		fs, err := audit.OpenFileSink(cfg.Audit.Dir, cfg.Audit.Retention.D(), !cfg.Audit.NoFsync, logger)
 		if err != nil {
 			return nil, err
@@ -146,13 +184,22 @@ func openAuditSink(ctx context.Context, cfg *config.Config, logger *slog.Logger)
 	if o == nil {
 		return primary, nil
 	}
-	headers, err := o.Headers()
+	fwd, err := func() (audit.Forwarder, error) {
+		headers, err := o.Headers()
+		if err != nil {
+			return nil, err
+		}
+		return audit.NewOTLPForwarder(ctx, audit.OTLPOptions{Endpoint: o.Endpoint, Insecure: o.Insecure, Headers: headers})
+	}()
 	if err != nil {
+		_ = primary.Close()
 		return nil, fmt.Errorf("audit.otlp: %w", err)
 	}
-	fwd, err := audit.NewOTLPForwarder(ctx, audit.OTLPOptions{Endpoint: o.Endpoint, Insecure: o.Insecure, Headers: headers})
-	if err != nil {
-		return nil, fmt.Errorf("audit.otlp: %w", err)
+	if pgSink != nil {
+		// The PostgreSQL sink re-chains lines to the shared tail; it
+		// forwards them as stored.
+		pgSink.SetForwarders(logger, fwd)
+		return pgSink, nil
 	}
 	ms := audit.NewMultiSink(primary, fwd)
 	ms.SetLogger(logger)

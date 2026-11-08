@@ -128,12 +128,13 @@ type AgentTokens struct {
 }
 
 type Store struct {
-	Driver string `yaml:"driver"` // sqlite
-	Path   string `yaml:"path"`
+	Driver string `yaml:"driver"`  // sqlite | postgres (see store_pg.go)
+	Path   string `yaml:"path"`    // sqlite
+	DSNEnv string `yaml:"dsn_env"` // postgres: environment variable holding the DSN
 }
 
 type Audit struct {
-	Output    string   `yaml:"output"` // file | stdout
+	Output    string   `yaml:"output"` // file | stdout | postgres
 	Dir       string   `yaml:"dir"`
 	Retention Duration `yaml:"retention"`
 	// LogRawSQL records SQL with literal values. Off by default: literals are
@@ -144,6 +145,9 @@ type Audit struct {
 	// OTLP additionally forwards entries as OpenTelemetry logs (optional,
 	// best effort).
 	OTLP *AuditOTLP `yaml:"otlp"`
+	// DSNEnv (output: postgres) names the environment variable holding the
+	// DSN of the audit database; default: store.dsn_env.
+	DSNEnv string `yaml:"dsn_env"`
 }
 
 type SQL struct {
@@ -309,7 +313,7 @@ func (c *Config) applyDefaults() {
 	if c.Store.Driver == "" {
 		c.Store.Driver = "sqlite"
 	}
-	if c.Store.Path == "" {
+	if c.Store.Path == "" && c.Store.Driver == StoreSQLite {
 		c.Store.Path = "var/dbgateway.db"
 	}
 	if c.Audit.Output == "" {
@@ -398,12 +402,7 @@ func (c *Config) validate() error {
 	if c.Auth.AgentTokens.MaxTTL.D() > 24*time.Hour {
 		add("auth.agent_tokens.max_ttl: must be at most 24h")
 	}
-	if c.Store.Driver != "sqlite" {
-		add("store.driver: only \"sqlite\" is supported")
-	}
-	if c.Audit.Output != "file" && c.Audit.Output != "stdout" {
-		add("audit.output: must be \"file\" or \"stdout\"")
-	}
+	c.validateStoreAndAuditOutput(add)
 	if c.Audit.OTLP != nil {
 		c.Audit.OTLP.validate(add, c.warn)
 	}
