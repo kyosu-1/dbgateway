@@ -1,0 +1,31 @@
+# Binaries
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Local runtime state
+/var/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.jsonl
+
+# Local / personal configuration (never commit)
+.env
+.env.*
+!.env.example
+/dbgateway.local.yaml
+/deploy/aws/terraform.tfvars
+/deploy/aws/*.auto.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
