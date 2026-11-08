@@ -1,0 +1,7 @@
+{{define "content"}}
+<section class="panel panel-section message-panel" aria-labelledby="h-notice">
+<h1 id="h-notice">{{t .Heading}}</h1>
+<p>{{t .Message}}</p>
+{{if .Anonymous}}<p><a href="/login">{{t "logout.login_again"}}</a></p>{{else}}<p><a href="/">{{t "notice.home"}}</a></p>{{end}}
+</section>
+{{end}}

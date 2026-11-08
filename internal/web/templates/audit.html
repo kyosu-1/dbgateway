@@ -1,0 +1,41 @@
+{{define "content"}}
+<div class="page-title">
+<h1>{{t "audit.heading"}}</h1>
+<p>{{t "audit.lead"}}</p>
+</div>
+
+{{if .NotFile}}
+<p class="alert alert-warn" role="status">{{t "audit.not_file"}}</p>
+{{else}}
+<form method="get" action="/audit" class="filters" role="search" aria-label="{{t "audit.filters"}}">
+<label class="grow" for="f-principal">{{t "audit.f_principal"}}<input id="f-principal" name="principal" type="search" class="control" value="{{.Principal}}" placeholder="{{t "audit.f_principal_placeholder"}}"></label>
+<label for="f-period">{{t "audit.f_period"}}<select id="f-period" name="period" class="control">{{range .Periods}}<option value="{{.Value}}"{{if eq .Value $.Period}} selected{{end}}>{{t .Key}}</option>{{end}}</select></label>
+<label for="f-db">{{t "audit.f_database"}}<select id="f-db" name="db" class="control"><option value="">{{t "audit.f_any_database"}}</option>{{range .Databases}}<option value="{{.Name}}"{{if eq .Name $.DB}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+<label for="f-decision">{{t "audit.f_decision"}}<select id="f-decision" name="decision" class="control"><option value="">{{t "audit.f_any_decision"}}</option>{{range .Decisions}}<option value="{{.}}"{{if eq . $.Decision}} selected{{end}}>{{t (printf "decision.%s" .)}}</option>{{end}}</select></label>
+<label for="f-table">{{t "audit.f_table"}}<input id="f-table" name="table" type="search" class="control" value="{{.Table}}" placeholder="users"></label>
+<button type="submit" class="btn btn-secondary btn-sm">{{t "audit.search"}}</button>
+</form>
+
+{{if .Rows}}
+<ul class="list">
+{{range .Rows}}
+<li>
+<a class="list-item" href="{{.Href}}">
+<span class="li-time">{{fmtTime .Time}}</span>
+<span class="li-lead">{{template "pill" .Decision}}</span>
+<span class="li-main">
+<span class="li-title">{{.Title}}</span>
+<span class="li-sub">{{.Sub}}</span>
+</span>
+{{template "chevron"}}
+</a>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="list list-empty">{{t "audit.empty"}}</p>
+{{end}}
+{{if .Skipped}}<p class="notice-text">{{t "audit.skipped" .Skipped}}</p>{{end}}
+{{with .NextURL}}<div class="pager"><a class="btn-small btn-link" href="{{.}}">{{t "audit.older"}}</a></div>{{end}}
+{{end}}
+{{end}}

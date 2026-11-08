@@ -1,0 +1,52 @@
+{{define "content"}}
+{{template "back" (dict "Href" "/account" "Label" (t "account.heading"))}}
+
+<div class="page-title">
+<h1>{{t "breakglass.heading"}}</h1>
+<p>{{t "breakglass.lead"}}</p>
+</div>
+
+{{if .Notice}}<p class="alert alert-success" role="status">{{t .Notice}}</p>{{end}}
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+
+<div class="warn-panel" role="note">{{template "icon-warning"}}<div class="stack-4"><strong>{{t "breakglass.warning_title"}}</strong><span>{{t "breakglass.warning"}}</span></div></div>
+
+{{if .Grants}}
+<section class="panel panel-section" aria-labelledby="h-active">
+<h2 id="h-active">{{t "breakglass.active_heading"}}</h2>
+<ul class="rows">
+{{range .Grants}}<li class="row"><span class="row-main"><span class="row-title">{{.Databases}}</span><span class="row-sub">{{t "breakglass.active_until" (fmtTime .ExpiresAt) (fmtDuration .Left)}}</span><span class="row-sub reason-text">{{.Reason}}</span></span><span class="pill pill-danger">{{t "breakglass.active"}}</span></li>
+{{end}}
+</ul>
+</section>
+{{end}}
+
+<section class="danger-panel" aria-labelledby="h-elevate">
+<div class="stack-2">
+<h2 id="h-elevate">{{t "breakglass.form_heading"}}</h2>
+<p class="small muted">{{t "breakglass.form_lead" (fmtDuration .Max)}}</p>
+</div>
+<form method="post" action="/breakglass" class="stack-16">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<fieldset class="checks">
+<legend>{{t "breakglass.databases"}}</legend>
+{{range .Databases}}<label class="check"><input type="checkbox" name="db" value="{{.}}"{{if has $.SelDBs .}} checked{{end}}><span>{{.}}</span></label>
+{{end}}
+</fieldset>
+<div class="field">
+<label for="bg-duration">{{t "breakglass.duration"}}</label>
+<select id="bg-duration" name="duration">
+{{range .Durations}}<option value="{{.Value}}"{{if eq .Value $.Duration}} selected{{end}}>{{fmtDuration .D}}</option>{{end}}
+</select>
+</div>
+<div class="field">
+<label for="bg-reason">{{t "breakglass.reason"}}</label>
+<textarea id="bg-reason" name="reason" rows="3" maxlength="1000" required placeholder="{{t "breakglass.reason_placeholder"}}">{{.Reason}}</textarea>
+</div>
+<div class="btn-row">
+<button type="submit" class="btn btn-danger btn-md">{{t "breakglass.submit"}}</button>
+<span class="notice-text">{{t "breakglass.submit_note"}}</span>
+</div>
+</form>
+</section>
+{{end}}

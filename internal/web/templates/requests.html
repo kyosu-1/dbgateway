@@ -1,0 +1,41 @@
+{{define "content"}}
+<div class="page-title">
+<h1>{{t "requests.heading"}}</h1>
+<p>{{t "requests.lead"}}</p>
+</div>
+
+{{if .Notice}}<p class="alert alert-success" role="status">{{t .Notice}}</p>{{end}}
+
+<nav class="tabs" aria-label="{{t "requests.tabs"}}">
+<a href="/requests"{{if eq .Tab "all"}} aria-current="page"{{end}}>{{t "requests.tab_all"}}</a>
+<a href="/requests?status=pending"{{if eq .Tab "pending"}} aria-current="page"{{end}}>{{t "requests.tab_pending"}}{{if .PendingCount}}<span class="count">{{.PendingCount}}</span>{{end}}</a>
+<a href="/requests?status=done"{{if eq .Tab "done"}} aria-current="page"{{end}}>{{t "requests.tab_done"}}</a>
+<a href="/requests?status=closed"{{if eq .Tab "closed"}} aria-current="page"{{end}}>{{t "requests.tab_closed"}}</a>
+</nav>
+
+{{if .Rows}}
+<ul class="list">
+{{range .Rows}}
+<li class="list-row">
+<a class="list-item" href="{{.Href}}">
+<span class="li-status">{{template "pill" .Status}}</span>
+<span class="li-main">
+<span class="li-title">{{.Title}}</span>
+<span class="li-sub">{{.Sub}}</span>
+</span>
+<span class="li-end">{{.When}}</span>
+{{template "chevron"}}
+</a>
+{{if .CanCancel}}
+<form method="post" action="/requests/{{.ID}}/cancel">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button type="submit" class="btn-small btn-danger-text" aria-label="{{t "requests.cancel_label" .Title}}">{{t "requests.cancel"}}</button>
+</form>
+{{end}}
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="list list-empty">{{t "requests.empty"}}</p>
+{{end}}
+{{end}}

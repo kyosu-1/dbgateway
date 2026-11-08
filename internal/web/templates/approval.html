@@ -1,0 +1,121 @@
+{{define "content"}}
+{{template "back" (dict "Href" "/approvals" "Label" (t "approvals.heading"))}}
+
+<div class="detail-head">
+<div class="pills">
+{{if .Pending}}<span class="pill pill-accent">{{t "status.pending"}} · {{.TimeLeft}}</span>{{else}}{{template "pill" .Status}}{{end}}
+{{template "pill" .Risk}}
+</div>
+<h1>{{.Title}}</h1>
+<p>{{.Sub}}</p>
+</div>
+
+{{if .Notice}}<p class="alert alert-success" role="status">{{t .Notice}}</p>{{end}}
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+
+<article class="article">
+<dl class="stats">
+<div><dt>{{t "approval.rows"}}</dt><dd class="big">{{if .Rows}}{{.Rows}}{{else}}{{t "approval.rows_unknown"}}{{end}}</dd></div>
+<div><dt>{{t "approval.tables"}}</dt><dd>{{.Tables}}</dd></div>
+<div><dt>{{if .CanApprove}}{{t "approval.your_turn"}}{{else}}{{t "approval.progress"}}{{end}}</dt><dd>{{t "approval.step_of" .StepNumber .StepCount}}</dd></div>
+</dl>
+
+<section aria-labelledby="h-sql">
+<div class="section-head">
+<h2 id="h-sql">{{t "approval.sql_heading"}} <span class="h-note">· {{t "approval.sql_raw_note"}}</span></h2>
+</div>
+{{template "sql" .RawSQL}}
+<details>
+<summary>{{t "approval.sql_hide_values"}}</summary>
+{{template "sql" .NormSQL}}
+</details>
+</section>
+
+<section aria-labelledby="h-reason">
+<h2 id="h-reason">{{t "approval.reason_heading"}} <span class="h-note">· {{if .AgentReason}}{{t "approval.reason_agent"}}{{else}}{{t "approval.reason_human"}}{{end}}</span></h2>
+<p class="reason-text" dir="auto">{{.Reason}}</p>
+{{with t "approval.reason_untranslated"}}<p class="notice-text">{{.}}</p>{{end}}
+</section>
+
+<section aria-labelledby="h-why">
+<h2 id="h-why">{{t "approval.why_heading"}}</h2>
+<p>{{t "approval.why" .Req.ApprovalRule .StepCount (fmtDuration .ExpireAfter)}}</p>
+<ol class="steps" aria-label="{{t "approval.steps_label"}}">
+{{range .Steps}}
+<li class="step-{{.State}}">
+<span class="step-dot" aria-hidden="true">{{if eq .State "done"}}✓{{else}}{{.Number}}{{end}}</span>
+<span class="step-body">
+<span>{{.Label}} {{if eq .State "current"}}<span class="pill pill-accent">{{t "approval.step_current"}}</span>{{else if eq .State "done"}}<span class="visually-hidden">{{t "approval.step_done"}}</span>{{end}}</span>
+{{range .Approvals}}<span class="li-sub">{{t "approval.approved_by" .Approver (fmtTime .At) (t .Method)}}</span>{{end}}
+</span>
+</li>
+{{end}}
+</ol>
+{{if and .Pending .Approvers}}<p class="small muted">{{t "approval.approvers" (join .Approvers ", ")}}</p>{{end}}
+<details>
+<summary>{{t "approval.details"}}</summary>
+<dl class="tech">
+<div><dt>{{t "approval.rule"}}</dt><dd><code>{{.Req.ApprovalRule}}</code></dd></div>
+<div><dt>{{t "approval.limit"}}</dt><dd>{{t "approval.limit_value" .Req.MaxAffectedRows}}</dd></div>
+<div><dt>{{t "approval.risk"}}</dt><dd>{{t .Risk.Key}}</dd></div>
+{{if .Columns}}<div><dt>{{t "approval.columns"}}</dt><dd class="mono">{{.Columns}}</dd></div>{{end}}
+<div><dt>{{t "approval.requested_at"}}</dt><dd>{{fmtTime .Req.CreatedAt}}</dd></div>
+<div><dt>{{t "approval.expires_at"}}</dt><dd>{{fmtTime .Req.ExpiresAt}}</dd></div>
+<div><dt>{{t "approval.config_version"}}</dt><dd class="mono">{{.Req.ConfigVersion}}</dd></div>
+<div><dt>{{t "approval.request_id"}}</dt><dd class="mono">{{.Req.ID}}</dd></div>
+</dl>
+{{if .AuditURL}}<p><a class="small" href="{{.AuditURL}}">{{t "approval.audit_link"}}</a></p>{{end}}
+</details>
+</section>
+
+{{if .Req.DecidedBy}}
+<section aria-labelledby="h-decided">
+<h2 id="h-decided">{{t "approval.decided_heading"}}</h2>
+<p>{{t "approval.decided_by" .Req.DecidedBy (fmtTime (deref .Req.DecidedAt))}}</p>
+{{if .Comment}}<p class="reason-text" dir="auto">{{.Comment}}</p>{{end}}
+</section>
+{{end}}
+
+{{with .Result}}
+<section aria-labelledby="h-result">
+<h2 id="h-result">{{t "approval.result_heading"}}</h2>
+{{if .Error}}
+<p class="alert alert-error" role="alert"><strong>{{t "approval.result_failed"}}</strong>{{$.ResultError}}{{if .Code}} <span class="mono">(SQLSTATE {{.Code}})</span>{{end}}</p>
+{{end}}
+{{if eq (printf "%s" $.Req.Status) "succeeded"}}<p>{{t "approval.result_rows" .RowsAffected .DurationMS}}</p>{{end}}
+{{with $.ResultTable}}
+<div class="table-wrap">{{template "datatable" .}}</div>
+{{if $.Result.Truncated}}<p class="notice-text">{{t "approval.result_truncated"}}</p>{{end}}
+{{end}}
+</section>
+{{end}}
+
+{{if or .CanApprove .CanReject}}
+<section aria-labelledby="h-decide" class="decide" id="decide">
+<h2 id="h-decide">{{t "approval.decide_heading"}}</h2>
+<form method="post" action="{{.RejectURL}}" class="stack-12">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label class="visually-hidden" for="decide-comment">{{t "approval.comment"}}</label>
+<textarea id="decide-comment" name="comment" rows="2" maxlength="1000" class="control" placeholder="{{t "approval.comment_placeholder"}}"></textarea>
+<div class="btn-row">
+{{if .CanApprove}}<button type="submit" formaction="{{.ApproveURL}}" class="btn btn-primary btn-md">{{t "approval.approve"}}</button>{{end}}
+{{if .CanReject}}<button type="submit" class="btn btn-reject btn-md">{{t "approval.reject"}}</button>{{end}}
+</div>
+</form>
+<p class="notice-text">{{if .CanApprove}}{{if .StepUpFresh}}{{t "approval.decide_note_fresh"}}{{else}}{{t "approval.decide_note"}}{{end}}{{else}}{{t "approval.decide_note_reject"}}{{end}}</p>
+</section>
+{{end}}
+
+{{if .CanCancel}}
+<section aria-labelledby="h-cancel">
+<h2 id="h-cancel">{{t "approval.cancel_heading"}}</h2>
+<form method="post" action="{{.CancelURL}}" class="btn-row">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="from" value="detail">
+<button type="submit" class="btn-small btn-danger-text">{{t "approval.cancel"}}</button>
+<span class="notice-text">{{t "approval.cancel_note"}}</span>
+</form>
+</section>
+{{end}}
+</article>
+{{end}}
