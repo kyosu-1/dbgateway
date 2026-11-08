@@ -126,6 +126,8 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 
 	path, h := api.NewTokenService(authSrv, st, cfg)
 	mux.Handle(path, h)
+	path, h = api.NewGatewayService(authSrv, gw, s.approvals, cfg)
+	mux.Handle(path, h)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

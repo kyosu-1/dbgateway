@@ -27,6 +27,10 @@ func main() {
 		if errors.As(err, &exit) {
 			os.Exit(int(exit))
 		}
+		var coded interface{ ExitCode() int } // e.g. *cli.ExitCodeError
+		if errors.As(err, &coded) {
+			os.Exit(coded.ExitCode())
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -55,6 +59,7 @@ func newRoot() *cobra.Command {
 		cli.LogoutCmd(),
 		cli.TokenCmd(),
 		cli.MCPCmd(),
+		cli.QueryCmd(), cli.ExplainCmd(), cli.DatabasesCmd(), cli.SearchCmd(), cli.RequestsCmd(), cli.RequestCmd(),
 	)
 	return root
 }

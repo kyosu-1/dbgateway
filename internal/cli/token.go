@@ -12,7 +12,7 @@ import (
 	dbgatewayv1 "github.com/kyosu-1/dbgateway/gen/dbgateway/v1"
 )
 
-// TokenCmd is `dbgw token create|list|revoke`.
+// TokenCmd is `dbgw token create|list|revoke|print`.
 func TokenCmd() *cobra.Command {
 	var server string
 	cmd := &cobra.Command{
@@ -20,7 +20,7 @@ func TokenCmd() *cobra.Command {
 		Short: "Manage your tokens",
 	}
 	cmd.PersistentFlags().StringVar(&server, "server", "", "dbgateway URL (default: the logged-in server)")
-	cmd.AddCommand(tokenCreateCmd(&server), tokenListCmd(&server), tokenRevokeCmd(&server))
+	cmd.AddCommand(tokenCreateCmd(&server), tokenListCmd(&server), tokenRevokeCmd(&server), tokenPrintCmd(&server))
 	return cmd
 }
 
