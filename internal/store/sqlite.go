@@ -124,7 +124,7 @@ func (s *SQLite) applyMigration(ctx context.Context, version int, name string) e
 func (s *SQLite) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	ms := before.UnixMilli()
 	var total int64
-	for _, table := range []string{"sessions", "auth_codes", "device_codes", "tokens", "passkey_enrollments", "webauthn_sessions"} {
+	for _, table := range []string{"sessions", "auth_codes", "device_codes", "tokens", "passkey_enrollments", "webauthn_sessions", "console_history"} {
 		res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at < ?`, ms)
 		if err != nil {
 			return total, fmt.Errorf("store: delete expired %s: %w", table, err)

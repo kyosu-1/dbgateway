@@ -2,7 +2,7 @@
 
 `dbgw` コマンドで、人が dbgateway を通して本番のデータベースに問い合わせるための手順です。AI エージェントと同じ経路（ロールの確認、SQL の解析、列の区分、ポリシー、承認、マスキング、監査ログ）を通ります。違いは、エージェントではなく本人として記録されることだけです。
 
-CLI は connectRPC の `GatewayService`（[proto/dbgateway/v1/gateway.proto](../proto/dbgateway/v1/gateway.proto)）を呼びます。Web 簡易コンソールも同じ API を使います。
+CLI は connectRPC の `GatewayService`（[proto/dbgateway/v1/gateway.proto](../proto/dbgateway/v1/gateway.proto)）を呼びます。Web の SQL エディタ（[console.md](console.md)）も同じゲートウェイを通ります。
 
 ## ログイン
 

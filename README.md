@@ -23,7 +23,7 @@ AIエージェントが本番DBに触るときに必ず通す「SQLを理解す�
 | 承認（フェーズ2） | 書き込みは承認待ちで返し（`status: pending`）、人がWeb画面でステップアップ認証（パスキーかIdPの再認証）をして承認。リスクレベルと承認ルール（CEL、複数段階）、申請者本人と同じ人の重複承認の禁止、SQLのハッシュ固定と実行直前の再評価、影響行数の上限超過でロールバック。MCPツール `get_request`、`explain_policy` |
 | 通知（フェーズ2） | Slack（Socket Mode。却下ボタン、承認画面へのリンク、スレッドで経緯を集約、アカウントの紐づけ）と汎用Webhook（HMAC署名）。異常検知（拒否の多発、大量取得）、設定変更の通知 |
 | 本人確認（フェーズ2） | パスキー（WebAuthn）によるログインとステップアップ。IdPのない環境は登録リンク（`dbgw passkey enroll`）から |
-| 人の利用（フェーズ3） | Web簡易コンソール、承認・リクエスト・監査ログ・ユーザーの画面（日本語・英語）、`dbgw query` などのCLI（connectRPC の `GatewayService`）、緊急昇格、期限付きロール（JIT）と unmask |
+| 人の利用（フェーズ3） | WebのSQLエディタ（補完、タブ、履歴、保存、実行前の判定、監査つきエクスポート）、承認・リクエスト・監査ログ・ユーザーの画面（日本語・英語）、`dbgw query` などのCLI（connectRPC の `GatewayService`）、緊急昇格、期限付きロール（JIT）と unmask |
 | 運用（フェーズ3） | RDS / Cloud SQL の IAM データベース認証、レプリカへの振り分け、OpenTelemetry（OTLP）への監査ログ転送、管理用DBと監査ログの PostgreSQL 対応（複数台構成） |
 | 拡張（フェーズ4） | MySQL アダプタ、SCIM 2.0、値の中身による個人情報の検出 |
 
@@ -83,7 +83,7 @@ dbgw policy test testdata/policy/*.yaml
 
 ### ドキュメント
 
-- [CLI](docs/cli.md)、[MySQL](docs/mysql.md)、[通知](docs/notifications.md)、[SCIM と個人情報の検出](docs/scim.md)
+- [SQLエディタ](docs/console.md)、[CLI](docs/cli.md)、[MySQL](docs/mysql.md)、[通知](docs/notifications.md)、[SCIM と個人情報の検出](docs/scim.md)
 - [運用（IAM認証、OTLP、緊急迂回経路）](docs/operations.md)、[冗長構成](docs/ha.md)
 
 ### 監査ログの検証

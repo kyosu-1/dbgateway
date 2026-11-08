@@ -18,7 +18,11 @@ package ui
 
 import (
 	"bytes"
+	"compress/gzip"
+	"crypto/rand"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -185,7 +189,15 @@ type pageData struct {
 	Nav      []navLink
 	Scripts  []string
 	Data     map[string]any
+	// StyleNonce allows <style> elements carrying it (see styleScripts).
+	StyleNonce string
 }
+
+// styleScripts are scripts that insert <style> elements (CodeMirror). A
+// page that loads one gets a per-response nonce in its CSP (style-src)
+// and in <meta name="dbgw-style-nonce">, which the script passes on.
+// Scripts stay limited to 'self'.
+var styleScripts = map[string]bool{"/static/editor.js": true}
 
 // Render executes a page in the request's language. The page is rendered
 // into a buffer first, so a template error never produces a half-written
@@ -212,6 +224,15 @@ func (rd *Renderer) Render(w http.ResponseWriter, r *http.Request, p Page) {
 		Title: p.Title, Layout: layout, Width: p.Width, DevMode: rd.devMode && !p.HideDevBanner,
 		SwitchJa: i18n.SwitchURL(r, "ja", "/account"), SwitchEn: i18n.SwitchURL(r, "en", "/account"),
 		User: p.User, Initials: Initials(p.User), Active: p.Active, Scripts: p.Scripts, Data: p.Data,
+	}
+	for _, src := range p.Scripts {
+		path, _, _ := strings.Cut(src, "?")
+		if styleScripts[path] {
+			d.StyleNonce = rand.Text()
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'nonce-"+d.StyleNonce+
+				"'; frame-ancestors 'none'; base-uri 'none'")
+			break
+		}
 	}
 	if layout == LayoutApp && p.User != "" && navf != nil {
 		for _, it := range navf(r, p.User) {
@@ -267,19 +288,58 @@ var staticFiles = map[string]string{
 	"/static/dbgw.css":    "text/css; charset=utf-8",
 	"/static/webauthn.js": "text/javascript; charset=utf-8",
 	"/static/copy.js":     "text/javascript; charset=utf-8",
+	"/static/editor.js":   "text/javascript; charset=utf-8",
 }
 
-// RegisterStatic serves the stylesheet and scripts.
-func RegisterStatic(mux *http.ServeMux) {
+// staticAsset is an embedded file with its gzip encoding and version.
+type staticAsset struct {
+	ctype   string
+	body    []byte
+	gzipped []byte
+	version string // short SHA-256 of body
+}
+
+var staticAssets = func() map[string]*staticAsset {
+	out := map[string]*staticAsset{}
 	for path, ctype := range staticFiles {
 		body, err := staticFS.ReadFile(strings.TrimPrefix(path, "/"))
 		if err != nil {
 			panic(err) // embedded; cannot happen
 		}
-		mux.Handle("GET "+path, SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", ctype)
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-			_, _ = w.Write(body)
+		var buf bytes.Buffer
+		zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		_, _ = zw.Write(body)
+		_ = zw.Close()
+		sum := sha256.Sum256(body)
+		out[path] = &staticAsset{ctype: ctype, body: body, gzipped: buf.Bytes(), version: hex.EncodeToString(sum[:6])}
+	}
+	return out
+}()
+
+// Asset returns the URL of a static file with its content version, so that
+// browsers fetch a changed file at once despite caching.
+func Asset(path string) string {
+	if a := staticAssets[path]; a != nil {
+		return path + "?v=" + a.version
+	}
+	return path
+}
+
+// RegisterStatic serves the stylesheet and scripts (gzip-encoded when the
+// client accepts it).
+func RegisterStatic(mux *http.ServeMux) {
+	for path, a := range staticAssets {
+		mux.Handle("GET "+path, SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("Content-Type", a.ctype)
+			h.Set("Cache-Control", "public, max-age=3600")
+			h.Add("Vary", "Accept-Encoding")
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				h.Set("Content-Encoding", "gzip")
+				_, _ = w.Write(a.gzipped)
+				return
+			}
+			_, _ = w.Write(a.body)
 		})))
 	}
 }
@@ -301,6 +361,7 @@ func Initials(email string) string {
 func Funcs() template.FuncMap {
 	return template.FuncMap{
 		"initials": Initials,
+		"asset":    Asset,
 		"inc":      func(i int) int { return i + 1 },
 		"join":     strings.Join,
 		"has":      func(list []string, v string) bool { return slices.Contains(list, v) },

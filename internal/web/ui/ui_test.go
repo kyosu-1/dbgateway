@@ -61,7 +61,7 @@ func TestRenderNavAndHeaders(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		`<html lang="ja">`, `<a class="nav-link" href="/approvals" aria-current="page">承認<span class="nav-badge" aria-hidden="true">3</span>`,
-		`href="/console">SQLコンソール</a>`, ">HA</a>", "&lt;b&gt;x&lt;/b&gt;",
+		`href="/console">SQLエディタ</a>`, ">HA</a>", "&lt;b&gt;x&lt;/b&gt;",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in\n%s", want, body)

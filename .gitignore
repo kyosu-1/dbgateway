@@ -48,3 +48,4 @@ deploy/gcp/*.pem
 /deploy/aws-ecs/*.auto.tfvars
 deploy/aws-ecs/*.pem
 deploy/aws-ecs/tfplan
+web/editor/node_modules/

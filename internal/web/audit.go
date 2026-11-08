@@ -67,6 +67,17 @@ func auditTitle(p *i18n.Printer, e *audit.StoredEntry) string {
 			s += " · " + rowsPhrase(p, float64(e.Result.Rows))
 		}
 		return s
+	case "export":
+		format, _ := e.Extra["format"].(string)
+		format = strings.ToUpper(format)
+		if e.Analysis == nil || len(e.Analysis.Tables) == 0 {
+			return p.T("audit.title.export.unknown", format)
+		}
+		s := p.T("audit.title.export", tableList(p, e.Analysis.Tables), format)
+		if e.Result != nil && e.Result.Error == nil && e.Decision == "allow" {
+			s += " · " + rowsPhrase(p, float64(e.Result.Rows))
+		}
+		return s
 	case "approval":
 		action, _ := e.Extra["action"].(string)
 		label := p.T("audit.action." + action)

@@ -26,6 +26,9 @@ var (
 	ErrAlreadyUsed = errors.New("store: already used")
 	// ErrConflict is returned when a row with the same key already exists.
 	ErrConflict = errors.New("store: conflict")
+	// ErrLimit is returned when a per-person limit (e.g. MaxSavedQueries)
+	// would be exceeded.
+	ErrLimit = errors.New("store: limit reached")
 )
 
 // HashSecret returns the hex SHA-256 of a secret. Only this hash is stored.
@@ -207,6 +210,7 @@ type Store interface {
 
 	ApprovalStore
 	WebStore
+	ConsoleStore
 
 	Close() error
 }

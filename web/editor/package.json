@@ -1,0 +1,21 @@
+{
+  "name": "dbgateway-editor",
+  "private": true,
+  "description": "SQL editor of the dbgateway web UI (CodeMirror 6), bundled into internal/web/ui/static/editor.js",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "esbuild src/editor.js --bundle --minify --format=iife --target=es2020 --legal-comments=none --banner:js=\"/* dbgateway SQL editor. Bundles CodeMirror 6 (MIT, https://codemirror.net) and @lezer (MIT). See web/editor/THIRD_PARTY_LICENSES. */\" --outfile=../../internal/web/ui/static/editor.js"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "6.20.4",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-sql": "6.10.0",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

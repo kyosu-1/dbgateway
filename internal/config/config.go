@@ -88,6 +88,9 @@ type Config struct {
 	// Auditors may use the audit log and user screens (see web.go).
 	Auditors []Auditor `yaml:"auditors"`
 
+	// Console configures the web SQL editor (see console.go).
+	Console Console `yaml:"console"`
+
 	// Version identifies the loaded file contents (short SHA-256). It is
 	// recorded in every audit log entry.
 	Version string `yaml:"-"`
@@ -634,6 +637,7 @@ func (c *Config) validate() error {
 	c.validateApprovals(groupNames, dbNames, add)
 	c.validateNotifications(add)
 	c.validateAuditors(groupNames, add)
+	c.Console.validate(add)
 	c.SCIM.validate(c, add)
 	c.PIIDetection.validate(add)
 	return errors.Join(errs...)

@@ -69,6 +69,8 @@ func Run(t *testing.T, h Harness) {
 		{"InstancesUpdateApprovalsOnce", testInstancesUpdateApprovalsOnce},
 		{"SlackLinksAndThreads", testSlackLinksAndThreads},
 		{"InstancesSlackCodeOnce", testInstancesSlackCodeOnce},
+		{"ConsoleHistory", testConsoleHistory},
+		{"SavedQueries", testSavedQueries},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { tt.fn(t, h) })
@@ -909,5 +911,85 @@ func testInstancesSlackCodeOnce(t *testing.T, h Harness) {
 	wg.Wait()
 	if wins.Load() != 1 {
 		t.Fatalf("code consumed %d times", wins.Load())
+	}
+}
+
+func testConsoleHistory(t *testing.T, h Harness) {
+	st := h.Open(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	rows := int64(2)
+	add := func(id, email string, at time.Time, ttl time.Duration) {
+		t.Helper()
+		must(t, st.AddConsoleHistory(ctx, &store.ConsoleHistory{ID: id, Email: email, Database: "prod", SQL: "SELECT 1 WHERE x = 'a@example.com'",
+			Reason: "ticket #1", Status: "ok", RowCount: &rows, RequestID: "req_" + id, CreatedAt: at, ExpiresAt: at.Add(ttl)}))
+	}
+	add("h1", "taro@example.com", now.Add(-2*time.Minute), time.Hour)
+	add("h2", "taro@example.com", now.Add(-time.Minute), time.Hour)
+	add("h3", "hanako@example.com", now, time.Hour)
+	add("old", "taro@example.com", now.Add(-2*time.Hour), time.Hour) // expired
+
+	list, err := st.ListConsoleHistory(ctx, "taro@example.com", 10, now)
+	must(t, err)
+	if len(list) != 2 || list[0].ID != "h2" || list[1].ID != "h1" {
+		t.Fatalf("history: %+v", list)
+	}
+	if got := list[0]; got.SQL != "SELECT 1 WHERE x = 'a@example.com'" || got.RowCount == nil || *got.RowCount != 2 || !got.CreatedAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("entry: %+v", got)
+	}
+	if _, err := st.GetConsoleHistory(ctx, "hanako@example.com", "h1", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("another person's entry: %v", err)
+	}
+	if _, err := st.GetConsoleHistory(ctx, "taro@example.com", "old", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expired entry: %v", err)
+	}
+	// Only the newest MaxConsoleHistory entries are kept.
+	for i := range store.MaxConsoleHistory {
+		add(fmt.Sprintf("n%04d", i), "taro@example.com", now.Add(time.Duration(i)*time.Millisecond), time.Hour)
+	}
+	list, err = st.ListConsoleHistory(ctx, "taro@example.com", 0, now)
+	must(t, err)
+	if len(list) != store.MaxConsoleHistory || list[len(list)-1].ID != "n0000" {
+		t.Fatalf("trimmed history: %d entries, oldest %s", len(list), list[len(list)-1].ID)
+	}
+	// DeleteExpired removes expired history.
+	if _, err := st.DeleteExpired(ctx, now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := st.ListConsoleHistory(ctx, "hanako@example.com", 0, now); len(list) != 0 {
+		t.Fatalf("after DeleteExpired: %+v", list)
+	}
+}
+
+func testSavedQueries(t *testing.T, h Harness) {
+	st := h.Open(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	save := func(id, email, name string) error {
+		return st.CreateSavedQuery(ctx, &store.SavedQuery{ID: id, Email: email, Name: name, Database: "prod", SQL: "SELECT " + id, CreatedAt: now, UpdatedAt: now})
+	}
+	must(t, save("q2", "taro@example.com", "b plans"))
+	must(t, save("q1", "taro@example.com", "a users"))
+	must(t, save("q3", "hanako@example.com", "mine"))
+	list, err := st.ListSavedQueries(ctx, "taro@example.com")
+	must(t, err)
+	if len(list) != 2 || list[0].ID != "q1" || list[1].Name != "b plans" || list[1].SQL != "SELECT q2" {
+		t.Fatalf("saved: %+v", list)
+	}
+	if _, err := st.GetSavedQuery(ctx, "taro@example.com", "q3"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("another person's query: %v", err)
+	}
+	if err := st.DeleteSavedQuery(ctx, "taro@example.com", "q3"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete another person's query: %v", err)
+	}
+	must(t, st.DeleteSavedQuery(ctx, "taro@example.com", "q1"))
+	if _, err := st.GetSavedQuery(ctx, "taro@example.com", "q1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted: %v", err)
+	}
+	for i := range store.MaxSavedQueries - 1 {
+		must(t, save(fmt.Sprintf("m%03d", i), "taro@example.com", "m"))
+	}
+	if err := save("over", "taro@example.com", "over"); !errors.Is(err, store.ErrLimit) {
+		t.Fatalf("over the limit: %v", err)
 	}
 }

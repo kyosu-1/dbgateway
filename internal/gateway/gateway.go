@@ -309,7 +309,17 @@ type ExecuteRequest struct {
 	SQL      string
 	Reason   string
 	TraceID  string
+	// Export marks a read whose result a person downloads from the SQL
+	// editor ("csv" or "json"). It is audited as event "export" with the
+	// format and row count. Only people may export, only reads are
+	// accepted, and ExportMaxRows replaces the database's row limit
+	// (a policy's max_rows still applies when lower).
+	Export        string
+	ExportMaxRows int
 }
+
+// exportMaxBytes bounds the size of one export.
+const exportMaxBytes = 64 << 20
 
 // ResultColumn describes a returned column.
 type ResultColumn struct {
@@ -380,6 +390,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	resp := &ExecuteResponse{RequestID: NewRequestID()}
 	entry := &audit.Entry{RequestID: resp.RequestID, TraceID: req.TraceID, Event: "query", Principal: principalInfo(p),
 		Database: req.Database, Reason: req.Reason, SQLSHA256: sha256Hex(req.SQL)}
+	if req.Export != "" {
+		entry.Event, entry.Extra = "export", map[string]any{"format": req.Export}
+	}
 	var ev *Evaluation
 	normalized := ""
 
@@ -421,6 +434,10 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 			fmt.Sprintf("接続先 %q は存在しないか、クエリを実行する権限がありません。", req.Database),
 			"list_databases で使える接続先と権限を確認してください。")
 	}
+	if req.Export != "" && (p.IsAgent() || req.ExportMaxRows <= 0) {
+		entry.SQL = redactedSQL(g.cfg, req.SQL, normalized)
+		return denied(analysis.StagePolicy, ruleExport, "エクスポートは人がSQLエディタから行う場合だけ使えます。", "")
+	}
 	if strings.TrimSpace(req.Reason) == "" {
 		entry.SQL = redactedSQL(g.cfg, req.SQL, normalized)
 		return denied(analysis.StagePolicy, "builtin:reason-required",
@@ -452,6 +469,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 			"誰の依頼で何を確認するためのクエリかを具体的に書いてください。")
 	}
 
+	if req.Export != "" && (ev.NeedsApproval() || ev.Analysis == nil || ev.Analysis.Statement.IsWrite) {
+		return denied(analysis.StagePolicy, ruleExport, "エクスポートできるのは読み取りの結果だけです。", "SELECT 文をエクスポートしてください。")
+	}
 	if ev.NeedsApproval() {
 		entry.Decision, entry.Stage, entry.Rule = config.ActionApprove, string(dec.Stage), dec.Rule
 		entry.Extra = map[string]any{"risk": dec.Risk, "approval_rule": dec.ApprovalRule.Name}
@@ -486,6 +506,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	limits := d.cfg.Limits
 	opts := analysis.ExecOptions{ReadOnly: true, MaxRows: limits.MaxRows, MaxBytes: int64(limits.MaxBytes),
 		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()}
+	if req.Export != "" {
+		opts.MaxRows, opts.MaxBytes = req.ExportMaxRows, max(opts.MaxBytes, exportMaxBytes)
+	}
 	if dec.Require.MaxRows > 0 && (opts.MaxRows <= 0 || dec.Require.MaxRows < opts.MaxRows) {
 		opts.MaxRows = dec.Require.MaxRows
 	}
@@ -532,6 +555,7 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 }
 
 const (
+	ruleExport        = "builtin:export"
 	ruleUntraceable   = "builtin:untraceable-output"
 	msgUntraceable    = "結果の列の出どころを追跡できないため、マスキングを保証できません。結果は返しません。"
 	hintUntraceable   = "* や複雑な式を避け、必要な列を明示して書き直してください。"

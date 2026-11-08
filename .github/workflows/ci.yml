@@ -37,6 +37,25 @@ jobs:
           bin/dbgw config validate --config examples/dev/dbgateway.yaml
           bin/dbgw policy test testdata/policy/*.yaml
 
+  editor:
+    # The SQL editor bundle (internal/web/ui/static/editor.js) is committed
+    # so that building dbgateway needs only Go; check it matches its source.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/editor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/editor/package-lock.json
+      - run: npm ci --no-fund --no-audit
+      - run: npm run build
+      - name: Bundle is up to date
+        run: git diff --exit-code -- ../../internal/web/ui/static/editor.js
+
   integration:
     runs-on: ubuntu-latest
     steps:

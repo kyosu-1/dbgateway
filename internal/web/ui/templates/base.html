@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>{{t .Title}} - dbgateway</title>
-<link rel="stylesheet" href="/static/dbgw.css">
+<link rel="stylesheet" href="{{asset "/static/dbgw.css"}}">
+{{with .StyleNonce}}<meta name="dbgw-style-nonce" content="{{.}}">
+{{end}}
 {{range .Scripts}}<script src="{{.}}" defer></script>
 {{end}}</head>
 <body>
@@ -65,4 +67,5 @@
 {{define "icon-warning"}}<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"></path><path d="M12 10v4"></path><path d="M12 17h.01"></path></svg>{{end}}
 {{define "icon-robot"}}<svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"></rect><path d="M12 7V4"></path><circle cx="9" cy="13" r="1"></circle><circle cx="15" cy="13" r="1"></circle></svg>{{end}}
 {{define "icon-key"}}<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"></circle><path d="M10.8 12.2L20 3"></path><path d="M16 7l3 3"></path><path d="M14 9l2 2"></path></svg>{{end}}
+{{define "icon-download"}}<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"></path><path d="M7 10l5 5 5-5"></path><path d="M5 20h14"></path></svg>{{end}}
 {{define "icon-play"}}<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"></path></svg>{{end}}

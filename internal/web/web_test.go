@@ -238,7 +238,7 @@ func TestConsole(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("console: %d", resp.StatusCode)
 	}
-	mustContain(t, page, `<option value="prod" selected>`, "users", "Masked column", "Reads return at most 1000 rows")
+	mustContain(t, page, `<option value="prod" selected>`, "users", `class="class-badge">masked<`, "Reads return at most 1000 rows")
 
 	run := func(form url.Values) (int, string) {
 		form.Set("csrf", csrf)
@@ -502,5 +502,93 @@ func TestConsoleSchemaListIsNotAudited(t *testing.T) {
 	}
 	if n := searches(); n != 1 {
 		t.Fatalf("a typed search wrote %d entries, want 1", n)
+	}
+}
+
+// The SQL editor keeps each person's history, runs only the selection,
+// saves queries per person and exports masked reads.
+func TestConsoleHistorySavedExport(t *testing.T) {
+	e := newEnv(t, nil)
+	c, csrf := e.login("taro@example.com")
+	post := func(form url.Values) (*http.Response, string) {
+		form.Set("csrf", csrf)
+		if form.Get("db") == "" {
+			form.Set("db", "prod")
+		}
+		return do(t, c, "POST", e.url("/console"), form)
+	}
+
+	// The page loads the editor with a style nonce in its CSP.
+	resp, page := do(t, c, "GET", e.url("/console?db=prod"), nil)
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "style-src 'self' 'nonce-") || !strings.Contains(csp, "default-src 'self'") || strings.Contains(csp, "unsafe") {
+		t.Fatalf("CSP: %q", csp)
+	}
+	mustContain(t, page, `name="dbgw-style-nonce"`, `src="/static/editor.js?v=`, `id="console-schema"`)
+
+	// Run only the selected statement.
+	_, page = post(url.Values{"sql": {"SELECT 1;\nSELECT id, email FROM users"}, "run_sql": {"SELECT id, email FROM users"},
+		"reason": {"ticket #1234 investigation"}, "action": {"run"}})
+	mustContain(t, page, "1 rows")
+	if execs := e.fa.Execs(); execs[len(execs)-1].SQL != "SELECT id, email FROM users" {
+		t.Fatalf("ran %q", execs[len(execs)-1].SQL)
+	}
+	hist, err := e.st.ListConsoleHistory(context.Background(), "taro@example.com", 10, time.Now())
+	if err != nil || len(hist) != 1 || hist[0].SQL != "SELECT id, email FROM users" || hist[0].Status != "ok" || *hist[0].RowCount != 1 {
+		t.Fatalf("history: %v %+v", err, hist)
+	}
+	_, page = do(t, c, "GET", e.url("/console?db=prod&panel=history"), nil)
+	mustContain(t, page, `href="/console?history=`+hist[0].ID+`"`, "ticket #1234 investigation")
+	_, page = do(t, c, "GET", e.url("/console?history="+hist[0].ID), nil)
+	mustContain(t, page, `data-prefill="history"`, ">SELECT id, email FROM users</textarea>", `value="ticket #1234 investigation"`)
+	// Another person cannot open it.
+	c2, csrf2 := e.login("hanako@example.com")
+	_, page = do(t, c2, "GET", e.url("/console?history="+hist[0].ID), nil)
+	mustNotContain(t, page, "SELECT id, email FROM users", `data-prefill=`)
+
+	// Save, list, open and delete.
+	_, page = post(url.Values{"sql": {"SELECT id FROM users"}, "save_name": {"my users"}, "action": {"save"}})
+	mustContain(t, page, "Query saved.", "my users")
+	saved, _ := e.st.ListSavedQueries(context.Background(), "taro@example.com")
+	if len(saved) != 1 || saved[0].SQL != "SELECT id FROM users" || saved[0].Database != "prod" {
+		t.Fatalf("saved: %+v", saved)
+	}
+	_, page = do(t, c, "GET", e.url("/console?saved="+saved[0].ID), nil)
+	mustContain(t, page, `data-prefill="saved"`, `data-prefill-name="my users"`)
+	_, page = post(url.Values{"sql": {"SELECT 1"}, "save_name": {""}, "action": {"save"}})
+	mustContain(t, page, "Enter a name")
+	do(t, c2, "POST", e.url("/console/saved/"+saved[0].ID+"/delete"), url.Values{"csrf": {csrf2}})
+	if saved, _ := e.st.ListSavedQueries(context.Background(), "taro@example.com"); len(saved) != 1 {
+		t.Fatal("another person must not delete the query")
+	}
+	resp, _ = do(t, c, "POST", e.url("/console/saved/"+saved[0].ID+"/delete"), url.Values{"csrf": {csrf}, "db": {"prod"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	if saved, _ := e.st.ListSavedQueries(context.Background(), "taro@example.com"); len(saved) != 0 {
+		t.Fatalf("not deleted: %+v", saved)
+	}
+
+	// Export: masked CSV, audited; writes are refused.
+	resp, body := post(url.Values{"sql": {"SELECT id, email FROM users"}, "reason": {"ticket #1234 export"}, "format": {"csv"}, "action": {"export"}})
+	if !strings.HasPrefix(resp.Header.Get("Content-Disposition"), `attachment; filename="dbgw-prod-`) || resp.Header.Get("Content-Type") != "text/csv; charset=utf-8" {
+		t.Fatalf("export headers: %v", resp.Header)
+	}
+	if !strings.Contains(body, "id,email\r\n1,") || strings.Contains(body, "user1@example.com") {
+		t.Fatalf("export body: %q", body)
+	}
+	_, page = post(url.Values{"sql": {update}, "reason": {"ticket #1234 export"}, "format": {"csv"}, "action": {"export"}})
+	mustContain(t, page, "Denied")
+	exports, err := audit.Search(e.cfg.Audit.Dir, audit.Filter{Event: "export", Limit: audit.MaxSearchLimit})
+	if err != nil || len(exports.Entries) != 2 {
+		t.Fatalf("export audit: %v %d", err, len(exports.Entries))
+	}
+}
+
+func TestCSVSafe(t *testing.T) {
+	for in, want := range map[string]string{"=SUM(A1)": "'=SUM(A1)", "+1": "'+1", "-1": "'-1", "@x": "'@x", "a=b": "a=b", "": ""} {
+		if got := csvSafe(in); got != want {
+			t.Errorf("csvSafe(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

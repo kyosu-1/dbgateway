@@ -289,3 +289,56 @@ func TestSearchObjectsBrowseIsNotAudited(t *testing.T) {
 		t.Fatalf("denied browse: %d deny entries, want 1", n)
 	}
 }
+
+// Exports are reads by people, audited as "export", with their own row
+// limit and the usual masking.
+func TestExport(t *testing.T) {
+	cfg, err := config.Parse([]byte(unitYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &countingSink{}
+	al, _ := audit.New(sink)
+	fa := gatewaytest.New()
+	fa.Set(func(a *gatewaytest.Adapter) {
+		a.Result = analysis.Result{Columns: []analysis.ResultColumn{{Name: "id", Type: "int8"}, {Name: "email", Type: "text"}},
+			Rows: [][]any{{int64(1), "taro@example.com"}}}
+	})
+	gw, err := gateway.New(gateway.Options{Config: cfg, Adapters: map[string]analysis.Adapter{"postgres": fa}, Audit: al})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Close()
+	ctx := context.Background()
+	export := func(p *identity.Principal, sql string) *gateway.ExecuteResponse {
+		return gw.ExecuteSQL(ctx, p, gateway.ExecuteRequest{Database: "prod", SQL: sql, Reason: "ticket #1234 export",
+			Export: "csv", ExportMaxRows: 5000})
+	}
+
+	r := export(taro, "SELECT id, email FROM users WHERE id = 1")
+	if r.Status != gateway.StatusOK || r.Rows[0][1] == "taro@example.com" || !r.Columns[1].Masked {
+		t.Fatalf("export must succeed with masking: %+v", r)
+	}
+	if execs := fa.Execs(); execs[len(execs)-1].Opts.MaxRows != 5000 {
+		t.Fatalf("export row limit: %+v", execs[len(execs)-1].Opts)
+	}
+	if sink.count(`"event":"export"`) != 1 || sink.count(`"format":"csv"`) != 1 || sink.count(`"event":"query"`) != 0 {
+		t.Fatalf("audit: %v", sink.lines)
+	}
+
+	n := len(fa.Execs())
+	if r := export(hanako, "UPDATE users SET plan = 'pro' WHERE id = 1"); r.Status != gateway.StatusDenied || r.Rule != "builtin:export" {
+		t.Fatalf("a write must not be exported: %+v", r)
+	}
+	agent := &identity.Principal{Kind: identity.KindAgent, Human: "taro@example.com", Agent: "claude", Groups: []string{"dev"},
+		Scopes: []string{identity.ScopeRead}}
+	if r := export(agent, "SELECT id FROM users WHERE id = 1"); r.Status != gateway.StatusDenied || r.Rule != "builtin:export" {
+		t.Fatalf("agents must not export: %+v", r)
+	}
+	if len(fa.Execs()) != n {
+		t.Fatal("denied exports must not execute")
+	}
+	if sink.count(`"event":"export"`) != 3 {
+		t.Fatalf("denied exports must be audited: %v", sink.lines)
+	}
+}

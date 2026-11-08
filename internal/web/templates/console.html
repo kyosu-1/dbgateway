@@ -1,9 +1,60 @@
 {{define "content"}}
 <h1 class="visually-hidden">{{t "console.heading"}}</h1>
-<div class="console">
-<aside class="console-side" aria-label="{{t "console.schema"}}">
-<h2 class="schema-db">{{.DB.Name}}</h2>
-<form method="get" action="/console" class="stack-8" role="search">
+<div class="console" id="console-root" data-storage-key="{{.StorageKey}}" data-db="{{.DB.Name}}"{{if .Posted}} data-posted="1"{{end}}{{with .Open.Kind}} data-prefill="{{.}}"{{end}}{{with .Open.Name}} data-prefill-name="{{.}}"{{end}}>
+<script type="application/json" id="console-text">{{.Text}}</script>
+{{with .Schema}}<script type="application/json" id="console-schema">{{.}}</script>{{end}}
+
+<aside class="console-side panel" aria-label="{{t "console.side"}}">
+<nav class="side-tabs" aria-label="{{t "console.side"}}">
+<a href="/console?db={{.DB.Name}}"{{if eq .Form.Panel "schema"}} aria-current="page"{{end}}>{{t "console.panel_schema"}}</a>
+<a href="/console?db={{.DB.Name}}&amp;panel=history"{{if eq .Form.Panel "history"}} aria-current="page"{{end}}>{{t "console.panel_history"}}</a>
+<a href="/console?db={{.DB.Name}}&amp;panel=saved"{{if eq .Form.Panel "saved"}} aria-current="page"{{end}}>{{t "console.panel_saved" (len .Saved)}}</a>
+</nav>
+
+{{if eq .Form.Panel "history"}}
+<div class="side-body">
+{{if not .HistoryEnabled}}<p class="small muted">{{t "console.history_disabled"}}</p>
+{{else}}
+<p class="small muted">{{t "console.history_lead" .HistoryDays}}</p>
+{{if .History}}
+<ol class="side-list">
+{{range .History}}
+<li><a href="/console?history={{.ID}}">
+<span class="side-meta">{{template "pill" .Pill}}<span>{{.Database}}{{with .RowCount}} · {{t "console.rows" (deref64 .)}}{{end}} · {{fmtTime .CreatedAt}}</span></span>
+<span class="side-sql">{{.SQL}}</span>
+{{if .Reason}}<span class="side-reason">{{t "console.history_reason" .Reason}}</span>{{end}}
+</a></li>
+{{end}}
+</ol>
+<p class="small muted">{{t "console.history_open"}}</p>
+{{else}}<p class="small muted">{{t "console.history_empty"}}</p>{{end}}
+{{end}}
+</div>
+
+{{else if eq .Form.Panel "saved"}}
+<div class="side-body">
+<p class="small muted">{{t "console.saved_lead"}}</p>
+{{if .Saved}}
+<ul class="side-list">
+{{range .Saved}}
+<li class="side-saved"><a href="/console?saved={{.ID}}">
+<span class="side-name">{{.Name}}</span>
+<span class="side-meta"><span>{{.Database}} · {{fmtTime .UpdatedAt}}</span></span>
+<span class="side-sql">{{.SQL}}</span>
+</a>
+<form method="post" action="/console/saved/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="db" value="{{$.DB.Name}}">
+<button type="submit" class="icon-btn" aria-label="{{t "console.saved_delete" .Name}}" title="{{t "console.saved_delete" .Name}}">×</button>
+</form>
+</li>
+{{end}}
+</ul>
+{{else}}<p class="small muted">{{t "console.saved_empty"}}</p>{{end}}
+</div>
+
+{{else}}
+<div class="side-body">
+<form method="get" action="/console" role="search">
 <input type="hidden" name="db" value="{{.DB.Name}}">
 <label class="visually-hidden" for="schema-search">{{t "console.schema_search"}}</label>
 <input id="schema-search" name="q" type="search" class="control" value="{{.Form.Search}}" placeholder="{{t "console.schema_search"}}">
@@ -11,26 +62,33 @@
 {{if .SchemaError}}<p class="small muted">{{t "console.schema_error"}}</p>
 {{else if .Objects}}
 <div class="schema">
-{{range .Objects}}
-<details>
-<summary>{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}</summary>
+{{range $i, $o := .Objects}}
+<details{{if and (eq $i 0) $.Form.Search}} open{{end}}>
+<summary><span class="schema-name">{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}</span>{{with .RowEstimate}}<span class="schema-rows">{{t "console.rows" (deref64 .)}}</span>{{end}}</summary>
 <ul>
-{{range .Columns}}<li><span class="col-name">{{.Name}}{{if .Masked}}<span role="img" aria-label="{{t "console.masked_column"}}" title="{{t "console.masked_column"}}">{{template "icon-lock-small"}}</span>{{end}}</span><span class="col-type">{{.Type}}</span></li>
+<li class="schema-insert"><button type="button" class="col-btn" data-insert="{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}">{{t "console.insert_table"}}</button></li>
+{{range .Columns}}<li><button type="button" class="col-btn" data-insert="{{.Name}}" title="{{t "console.insert_column"}}"><span class="col-name">{{.Name}}{{if or .Masked (eq .Class "masked")}}<span class="class-badge">{{t "console.class_masked"}}</span>{{else if eq .Class "no_ai"}}<span class="class-badge class-no-ai">{{t "console.class_no_ai"}}</span>{{end}}</span><span class="col-type" title="{{.Type}}">{{.Type}}</span></button></li>
 {{end}}
 </ul>
 </details>
 {{end}}
 {{if .ObjectsTruncated}}<p class="small muted">{{t "console.schema_truncated"}}</p>{{end}}
 </div>
+<p class="small muted js-only">{{t "console.schema_insert_hint"}}</p>
 {{else}}<p class="small muted">{{t "console.schema_empty"}}</p>{{end}}
+</div>
+{{end}}
 </aside>
 
 <div class="console-main">
-<form method="post" action="/console" class="editor" aria-label="{{t "console.query"}}">
+<form method="post" action="/console" class="editor" id="console-form" aria-label="{{t "console.query"}}">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="run_sql" value="">
+<input type="hidden" name="panel" value="{{.Form.Panel}}">
 <div class="editor-top">
-<label for="db-run" class="small muted">{{t "console.database"}}</label>
-<select id="db-run" name="db" class="control">
+<div class="editor-tabs" id="editor-tabs" role="tablist" aria-label="{{t "console.tabs"}}"></div>
+<label for="db-run" class="visually-hidden">{{t "console.database"}}</label>
+<select id="db-run" name="db" class="control control-sm">
 {{range .Databases}}<option value="{{.Name}}"{{if eq .Name $.DB.Name}} selected{{end}}>{{.Name}}</option>{{end}}
 </select>
 </div>
@@ -39,27 +97,88 @@
 <div class="editor-bar">
 <label class="visually-hidden" for="sql-reason">{{t "console.reason"}}</label>
 <input id="sql-reason" name="reason" type="text" class="control grow" value="{{.Form.Reason}}" maxlength="500" placeholder="{{t "console.reason_placeholder"}}">
-<button type="submit" name="action" value="explain" class="btn btn-secondary btn-sm" formnovalidate>{{t "console.explain"}}</button>
-<button type="submit" name="action" value="run" class="btn btn-primary btn-sm">{{template "icon-play"}}{{t "console.run"}}</button>
+<details class="popover">
+<summary class="btn btn-secondary btn-sm">{{t "console.save"}}</summary>
+<div class="popover-body">
+<label for="save-name" class="small">{{t "console.save_name"}}</label>
+<input id="save-name" name="save_name" type="text" class="control" maxlength="100" value="{{.Form.SaveName}}">
+<p class="small muted">{{t "console.save_lead"}}</p>
+<button type="submit" name="action" value="save" class="btn btn-primary btn-sm" formnovalidate>{{t "console.save"}}</button>
+</div>
+</details>
+<button type="submit" name="action" value="explain" class="btn btn-secondary btn-sm" formnovalidate title="{{t "console.explain_key"}}">{{t "console.explain"}}</button>
+<button type="submit" name="action" value="run" class="btn btn-primary btn-sm" title="{{t "console.run_key"}}">{{template "icon-play"}}{{t "console.run"}}<span class="kbd js-only" aria-hidden="true">⌘↵</span></button>
 </div>
 </form>
 
 <p class="notice-text">{{t "console.limits" .MaxRows (fmtDuration .Timeout)}}{{if .CanWrite}} {{t "console.writes_need_approval"}}{{end}}</p>
 
 {{with .Result}}
+<div id="console-result" class="stack-16">
 {{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+{{if .Saved}}<p class="alert alert-success" role="status">{{t "console.saved_done"}}</p>{{end}}
 {{if .ExplainError}}<p class="alert alert-error" role="alert">{{.ExplainError}}</p>{{end}}
+
+{{with .Explain}}
+<div class="decision-bar" role="status">
+{{template "pill" $.ExplainPill}}
+<span>{{if .Rule}}{{t "console.explain_rule"}} <code>{{.Rule}}</code>{{end}}{{if .Risk}} · {{t "approval.risk"}} {{t (printf "risk.%s" .Risk)}}{{end}}{{with .Estimate}} · {{t "console.explain_estimate"}} {{t "console.explain_estimate_value" (printf "%.0f" .Rows)}}{{end}}</span>
+{{with $.MaskedOutputs}}<span class="muted">{{t "console.explain_masked"}} <strong>{{join . ", "}}</strong></span>{{end}}
+</div>
+<section class="result" aria-labelledby="h-explain">
+<div class="result-head"><h2 id="h-explain">{{t "console.explain_heading"}}</h2></div>
+<div class="result-body">
+<dl class="tech">
+{{if .Rule}}<div><dt>{{t "console.explain_rule"}}</dt><dd><code>{{.Rule}}</code>{{if .Stage}} ({{.Stage}}){{end}}</dd></div>{{end}}
+{{with .Statement}}<div><dt>{{t "console.explain_statement"}}</dt><dd>{{.Kind}}{{if .Tables}} · {{join .Tables ", "}}{{end}}</dd></div>{{end}}
+{{with .Estimate}}<div><dt>{{t "console.explain_estimate"}}</dt><dd>{{t "console.explain_estimate_value" (printf "%.0f" .Rows)}}</dd></div>{{end}}
+{{if .Risk}}<div><dt>{{t "approval.risk"}}</dt><dd>{{t (printf "risk.%s" .Risk)}}</dd></div>{{end}}
+{{if .ApprovalRule}}<div><dt>{{t "approval.rule"}}</dt><dd><code>{{.ApprovalRule}}</code>{{if .ExpireAfter}} · {{t "console.explain_expire" .ExpireAfter}}{{end}}</dd></div>{{end}}
+{{if .MaxAffectedRows}}<div><dt>{{t "approval.limit"}}</dt><dd>{{t "approval.limit_value" .MaxAffectedRows}}</dd></div>{{end}}
+{{if .Approvers}}<div><dt>{{t "console.explain_approvers"}}</dt><dd>{{join .Approvers ", "}}</dd></div>{{end}}
+{{if .BreakGlass}}<div><dt>{{t "nav.breakglass"}}</dt><dd>{{t "console.explain_break_glass"}}</dd></div>{{end}}
+{{if .Output}}<div><dt>{{t "console.explain_output"}}</dt><dd class="mono">{{range $i, $o := .Output}}{{if $i}}, {{end}}{{$o.Name}}{{if $o.Masked}} ({{t "table.masked"}}){{else if $o.Withheld}} ({{t "table.withheld"}}){{end}}{{end}}</dd></div>{{end}}
+</dl>
+{{if .Reason}}<p class="reason-text">{{.Reason}}</p>{{end}}
+{{if .Hint}}<p class="small"><strong>{{t "console.hint"}}</strong> <span class="reason-text">{{.Hint}}</span></p>{{end}}
+</div>
+</section>
+{{end}}
 
 {{with .Exec}}
 {{if eq .Status "ok"}}
 <section class="result" aria-labelledby="h-result">
 <div class="result-head">
+<div class="result-title">
 <h2 id="h-result">{{if .RowsAffected}}{{t "console.rows_affected" (deref64 .RowsAffected)}}{{else}}{{t "console.rows" .RowCount}}{{end}}</h2>
-<span class="small muted">{{t "decision.allow"}}{{if .Rule}} ({{.Rule}}){{end}}{{if $.IsAuditor}} · <a href="/audit/{{.RequestID}}">{{.RequestID}}</a>{{else}} · <span class="mono">{{.RequestID}}</span>{{end}}</span>
+<span class="small muted">{{$.Result.DurationText}} · {{t "decision.allow"}}{{if .Rule}} ({{.Rule}}){{end}}{{if $.IsAuditor}} · <a href="/audit/{{.RequestID}}">{{.RequestID}}</a>{{else}} · <span class="mono">{{.RequestID}}</span>{{end}}</span>
+</div>
+{{if and $.ExportEnabled .Columns (not .RowsAffected)}}
+<details class="popover popover-end">
+<summary class="btn btn-secondary btn-sm">{{template "icon-download"}}{{t "console.export"}}</summary>
+<form method="post" action="/console" class="popover-body">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="db" value="{{$.DB.Name}}">
+<input type="hidden" name="sql" value="{{$.Result.SQL}}">
+<input type="hidden" name="reason" value="{{$.Form.Reason}}">
+<fieldset class="inline-radios"><legend class="small">{{t "console.export_format"}}</legend>
+<label><input type="radio" name="format" value="csv" checked> CSV</label>
+<label><input type="radio" name="format" value="json"> JSON</label>
+</fieldset>
+<ul class="export-notes small">
+<li>{{t "console.export_note_mask"}}</li>
+<li>{{t "console.export_note_rows" $.ExportMaxRows}}</li>
+<li>{{t "console.export_note_audit"}}</li>
+</ul>
+<button type="submit" name="action" value="export" class="btn btn-primary btn-sm">{{t "console.export_download"}}</button>
+</form>
+</details>
+{{end}}
 </div>
 {{if .BreakGlass}}<div class="result-body"><p class="alert alert-warn">{{t "console.break_glass_used"}}</p></div>{{end}}
-{{with $.Result.Table}}<div class="table-wrap">{{template "datatable" .}}</div>{{end}}
+{{with $.Result.Table}}<div class="table-wrap">{{template "datatable-sortable" .}}</div>{{end}}
 {{if .Hint}}<div class="result-body"><p class="notice-text">{{.Hint}}</p></div>{{end}}
+<p class="result-foot small muted">{{t "console.result_foot" $.MaxRows}}</p>
 </section>
 {{else if eq .Status "pending"}}
 <section class="result" aria-labelledby="h-result">
@@ -90,28 +209,12 @@
 </section>
 {{end}}
 {{end}}
+</div>
+{{end}}
+</div>
+</div>
+{{end}}
 
-{{with .Explain}}
-<section class="result" aria-labelledby="h-explain">
-<div class="result-head"><h2 id="h-explain">{{t "console.explain_heading"}}</h2>{{template "pill" $.ExplainPill}}</div>
-<div class="result-body">
-<dl class="tech">
-{{if .Rule}}<div><dt>{{t "console.explain_rule"}}</dt><dd><code>{{.Rule}}</code>{{if .Stage}} ({{.Stage}}){{end}}</dd></div>{{end}}
-{{with .Statement}}<div><dt>{{t "console.explain_statement"}}</dt><dd>{{.Kind}}{{if .Tables}} · {{join .Tables ", "}}{{end}}</dd></div>{{end}}
-{{with .Estimate}}<div><dt>{{t "console.explain_estimate"}}</dt><dd>{{t "console.explain_estimate_value" (printf "%.0f" .Rows)}}</dd></div>{{end}}
-{{if .Risk}}<div><dt>{{t "approval.risk"}}</dt><dd>{{t (printf "risk.%s" .Risk)}}</dd></div>{{end}}
-{{if .ApprovalRule}}<div><dt>{{t "approval.rule"}}</dt><dd><code>{{.ApprovalRule}}</code>{{if .ExpireAfter}} · {{t "console.explain_expire" .ExpireAfter}}{{end}}</dd></div>{{end}}
-{{if .MaxAffectedRows}}<div><dt>{{t "approval.limit"}}</dt><dd>{{t "approval.limit_value" .MaxAffectedRows}}</dd></div>{{end}}
-{{if .Approvers}}<div><dt>{{t "console.explain_approvers"}}</dt><dd>{{join .Approvers ", "}}</dd></div>{{end}}
-{{if .BreakGlass}}<div><dt>{{t "nav.breakglass"}}</dt><dd>{{t "console.explain_break_glass"}}</dd></div>{{end}}
-{{if .Output}}<div><dt>{{t "console.explain_output"}}</dt><dd class="mono">{{range $i, $o := .Output}}{{if $i}}, {{end}}{{$o.Name}}{{if $o.Masked}} ({{t "table.masked"}}){{else if $o.Withheld}} ({{t "table.withheld"}}){{end}}{{end}}</dd></div>{{end}}
-</dl>
-{{if .Reason}}<p class="reason-text">{{.Reason}}</p>{{end}}
-{{if .Hint}}<p class="small"><strong>{{t "console.hint"}}</strong> <span class="reason-text">{{.Hint}}</span></p>{{end}}
-</div>
-</section>
-{{end}}
-{{end}}
-</div>
-</div>
-{{end}}
+{{define "datatable-sortable"}}<table class="data" data-sortable><thead><tr>{{range .Columns}}<th scope="col"><button type="button" class="sort">{{if .Masked}}<span class="th-flag">{{.Name}}<span class="class-badge">{{t "console.class_masked"}}</span></span>{{else if .Withheld}}<span class="th-flag">{{.Name}}<span class="visually-hidden"> ({{t "table.withheld"}})</span></span>{{else}}{{.Name}}{{end}}<span class="sort-mark" aria-hidden="true"></span></button></th>{{end}}</tr></thead>
+<tbody>{{range .Rows}}<tr>{{range .}}<td{{if .Null}} class="null" data-null="1"{{else if .Masked}} class="masked"{{end}}>{{.Text}}</td>{{end}}</tr>
+{{end}}</tbody></table>{{end}}
