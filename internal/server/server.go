@@ -47,7 +47,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 		}
 	}()
 
-	sink, err := openAuditSink(cfg, logger)
+	sink, err := openAuditSink(ctx, cfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +106,34 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	return s, nil
 }
 
-func openAuditSink(cfg *config.Config, logger *slog.Logger) (audit.Sink, error) {
+// openAuditSink opens the primary audit sink and, when configured, wraps it
+// with best-effort forwarders (OTLP). Only the primary decides success.
+func openAuditSink(ctx context.Context, cfg *config.Config, logger *slog.Logger) (audit.Sink, error) {
+	var primary audit.Sink
 	if cfg.Audit.Output == "stdout" {
-		return audit.NewStdoutSink(os.Stdout), nil
+		primary = audit.NewStdoutSink(os.Stdout)
+	} else {
+		fs, err := audit.OpenFileSink(cfg.Audit.Dir, cfg.Audit.Retention.D(), !cfg.Audit.NoFsync, logger)
+		if err != nil {
+			return nil, err
+		}
+		primary = fs
 	}
-	return audit.OpenFileSink(cfg.Audit.Dir, cfg.Audit.Retention.D(), !cfg.Audit.NoFsync, logger)
+	o := cfg.Audit.OTLP
+	if o == nil {
+		return primary, nil
+	}
+	headers, err := o.Headers()
+	if err != nil {
+		return nil, fmt.Errorf("audit.otlp: %w", err)
+	}
+	fwd, err := audit.NewOTLPForwarder(ctx, audit.OTLPOptions{Endpoint: o.Endpoint, Insecure: o.Insecure, Headers: headers})
+	if err != nil {
+		return nil, fmt.Errorf("audit.otlp: %w", err)
+	}
+	ms := audit.NewMultiSink(primary, fwd)
+	ms.SetLogger(logger)
+	return ms, nil
 }
 
 // Handler returns the root HTTP handler (useful for tests).

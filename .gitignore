@@ -34,3 +34,6 @@ deploy/aws/tfplan
 /deploy/gcp/*.auto.tfvars
 deploy/gcp/*.pem
 deploy/gcp/tfplan
+
+# Claude Code agent worktrees
+/.claude/
