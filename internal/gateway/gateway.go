@@ -39,6 +39,9 @@ type Options struct {
 	Logger   *slog.Logger
 	// Events receives query_denied events. Nil means events.Nop.
 	Events events.Publisher
+	// RowsObserver, when set, is told how many rows each successful read
+	// returned (used for anomaly detection). It must not block.
+	RowsObserver func(p *events.Principal, database string, rows int64)
 }
 
 // Gateway serves requests for all configured databases.
@@ -50,7 +53,9 @@ type Gateway struct {
 	pii    *mask.PIIDetector // value-based PII detection for agents (may be disabled)
 	logger *slog.Logger
 	events events.Publisher
-	dbs    map[string]*database
+	// rowsObserver receives returned row counts (anomaly detection).
+	rowsObserver func(p *events.Principal, database string, rows int64)
+	dbs          map[string]*database
 
 	// approvals handles writes that need approval; nil until SetApprovals.
 	approvals Approvals
@@ -81,7 +86,7 @@ func New(opts Options) (*Gateway, error) {
 		pub = events.Nop{}
 	}
 	g := &Gateway{Evaluator: ev, cfg: opts.Config, audit: opts.Audit, masker: mask.NewMasker(opts.Config), pii: mask.NewPIIDetector(opts.Config.PIIDetection), logger: logger,
-		events: pub, dbs: map[string]*database{}}
+		events: pub, rowsObserver: opts.RowsObserver, dbs: map[string]*database{}}
 	for i := range opts.Config.Databases {
 		db := &opts.Config.Databases[i]
 		ad, ok := opts.Adapters[db.Type]
@@ -499,6 +504,9 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	resp.Status, resp.Notice = StatusOK, DataNotice
 	resp.Columns, resp.Rows = cols, rows
 	resp.RowCount, resp.Truncated = res.RowCount, res.Truncated
+	if g.rowsObserver != nil {
+		g.rowsObserver(EventPrincipal(p), req.Database, int64(res.RowCount))
+	}
 	if res.TotalRows >= 0 && res.Truncated {
 		total := res.TotalRows
 		resp.TotalRows = &total

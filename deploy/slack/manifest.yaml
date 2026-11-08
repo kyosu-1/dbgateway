@@ -1,0 +1,38 @@
+# Slack app manifest for dbgateway (see docs/notifications.md).
+#
+# Create the app at https://api.slack.com/apps → "Create New App" →
+# "From an app manifest", paste this file, then:
+#   1. Basic Information → App-Level Tokens: create a token with the
+#      connections:write scope (xapp-…) → SLACK_APP_TOKEN
+#   2. Install to Workspace → Bot User OAuth Token (xoxb-…) → SLACK_BOT_TOKEN
+#   3. Invite the bot to every channel used in `notifications`
+#      (/invite @dbgateway)
+#
+# Socket Mode: dbgateway opens an outbound WebSocket to Slack; no inbound
+# URL (request URL, events URL) is needed.
+display_information:
+  name: dbgateway
+  description: SQL gateway approvals and alerts
+  background_color: "#1f2937"
+features:
+  bot_user:
+    display_name: dbgateway
+    always_online: true
+  slash_commands:
+    - command: /dbgw
+      description: Link your Slack account to dbgateway (link / unlink / whoami)
+      usage_hint: "link <code> | unlink | whoami"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write   # post approval requests, thread replies, updates, ephemeral replies
+      - im:write     # open DMs to requesters (slack: requester)
+      - users:read   # resolve users in interactions
+      - commands     # /dbgw
+settings:
+  interactivity:
+    is_enabled: true # the reject button
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
