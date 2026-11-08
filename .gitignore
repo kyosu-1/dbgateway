@@ -23,7 +23,6 @@ coverage.*
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 
 # Editors / OS
 .idea/

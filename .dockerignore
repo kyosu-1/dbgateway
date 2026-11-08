@@ -1,0 +1,7 @@
+.git
+bin
+var
+dist
+*.db
+*.jsonl
+deploy/aws/.terraform
