@@ -81,9 +81,10 @@ type Config struct {
 	ApprovalRules []ApprovalRule `yaml:"approval_rules"`
 	Unmask        []Unmask       `yaml:"unmask"`
 	BreakGlass    *BreakGlass    `yaml:"break_glass"`
-	// Notifications is accepted so that a full configuration validates,
-	// but is not used yet.
-	Notifications yaml.Node `yaml:"notifications"`
+	// Notifications routes events to Slack and webhooks; the settings
+	// (slack, anomaly, ...) are inlined (see notifications.go).
+	Notifications        []NotificationRoute `yaml:"notifications"`
+	NotificationSettings `yaml:",inline"`
 
 	// Version identifies the loaded file contents (short SHA-256). It is
 	// recorded in every audit log entry.
@@ -558,9 +559,7 @@ func (c *Config) validate() error {
 
 	c.validatePGProxy(add)
 	c.validateApprovals(groupNames, dbNames, add)
-	if c.Notifications.Kind != 0 {
-		c.warn("notifications: planned for phase 2; ignored")
-	}
+	c.validateNotifications(add)
 	c.SCIM.validate(c, add)
 	c.PIIDetection.validate(add)
 	return errors.Join(errs...)
