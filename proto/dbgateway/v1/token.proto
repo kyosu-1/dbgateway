@@ -71,8 +71,8 @@ message CreateAgentTokenRequest {
   // Requested lifetime in seconds. Zero means the server maximum; larger
   // values are capped to the server maximum.
   int64 ttl_seconds = 3;
-  // Requested scopes. Empty means ["db:read"]. Only "db:read" is available
-  // in phase 1.
+  // Requested scopes. Empty means ["db:read"]. "db:write" (submitting
+  // writes for approval) is available when approvals are enabled.
   repeated string scopes = 4;
 }
 

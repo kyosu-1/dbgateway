@@ -26,6 +26,7 @@ func TokenCmd() *cobra.Command {
 
 func tokenCreateCmd(server *string) *cobra.Command {
 	var agent, databases string
+	var write bool
 	var ttl time.Duration
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -40,6 +41,7 @@ func tokenCreateCmd(server *string) *cobra.Command {
 				AgentName:  agent,
 				Databases:  splitList(databases),
 				TtlSeconds: int64(ttl / time.Second),
+				Scopes:     scopesFor(write),
 			}))
 			if err != nil {
 				return err
@@ -53,6 +55,7 @@ func tokenCreateCmd(server *string) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "agent name recorded in audit logs (required)")
 	cmd.Flags().StringVar(&databases, "databases", "", "comma-separated databases the agent may read (required)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 0, "token lifetime (default and maximum: the server's max_ttl)")
+	cmd.Flags().BoolVar(&write, "write", false, "also allow submitting writes for approval (db:write)")
 	_ = cmd.MarkFlagRequired("agent")
 	_ = cmd.MarkFlagRequired("databases")
 	return cmd

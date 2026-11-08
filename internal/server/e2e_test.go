@@ -208,6 +208,7 @@ func oauth(t *testing.T, s *stack) string {
 	post.Set("action", "approve")
 	post.Set("agent_name", "e2e-agent")
 	post.Set("database", "dev-main")
+	post.Set("write", "1") // ignored unless approvals are enabled and the user is a writer
 	r, _ = form(t, browser, "POST", asm.AuthorizationEndpoint, post)
 	loc, _ := url.Parse(r.Header.Get("Location"))
 	if r.StatusCode != http.StatusFound || loc.Query().Get("state") != "st" || loc.Query().Get("code") == "" {

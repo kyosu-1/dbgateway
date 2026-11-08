@@ -533,5 +533,7 @@
   "duration.second.one": "%d second",
   "duration.second.other": "%d seconds",
   "audit.title.query.kind": "%s statement",
-  "audit.title.explain.kind": "Explain: %s statement"
+  "audit.title.explain.kind": "Explain: %s statement",
+  "consent.write": "Request writes to the selected databases",
+  "consent.write_desc": "The agent can only submit writes. Each one runs only after someone other than you approves it (databases where you have the writer role)."
 }

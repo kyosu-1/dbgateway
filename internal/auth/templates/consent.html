@@ -49,6 +49,15 @@
 </div>
 {{end}}{{end}}
 {{if not .HasAny}}<p class="alert alert-warn">{{t "consent.no_databases"}}</p>{{end}}
+{{if .CanWrite}}
+<label class="choice">
+<input type="checkbox" name="write" value="1"{{if .WriteChecked}} checked{{end}}>
+<span class="choice-body">
+<span class="choice-title">{{t "consent.write"}}</span>
+<span class="choice-desc">{{t "consent.write_desc"}}</span>
+</span>
+</label>
+{{end}}
 </fieldset>
 
 <ul class="info">

@@ -86,7 +86,7 @@ func (s *Server) MintAgentToken(ctx context.Context, caller *identity.Principal,
 	if err != nil {
 		return "", nil, err
 	}
-	scopes, err := grantableScopes(req.Scopes)
+	scopes, err := grantableScopes(req.Scopes, s.cfg.Approvals.Enabled)
 	if err != nil {
 		return "", nil, err
 	}
@@ -165,14 +165,23 @@ func (s *Server) accessibleNames(human *identity.Principal) []string {
 	return out
 }
 
-// grantableScopes validates requested scopes. Phase 1 grants db:read only.
-func grantableScopes(requested []string) ([]string, error) {
+// grantableScopes validates requested scopes: db:read is always granted;
+// db:write (submitting writes for approval) only when approvals are enabled.
+// Whether the person may write is checked by roles at use time.
+func grantableScopes(requested []string, writes bool) ([]string, error) {
+	out := []string{identity.ScopeRead}
 	for _, sc := range requested {
-		if sc != identity.ScopeRead {
-			return nil, fmt.Errorf("%w: unsupported scope %q (only %s is available)", ErrInvalidRequest, sc, identity.ScopeRead)
+		switch {
+		case sc == identity.ScopeRead:
+		case sc == identity.ScopeWrite && writes:
+			if !slices.Contains(out, sc) {
+				out = append(out, sc)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported scope %q", ErrInvalidRequest, sc)
 		}
 	}
-	return []string{identity.ScopeRead}, nil
+	return out, nil
 }
 
 const maxAgentNameLen = 64

@@ -282,8 +282,8 @@ type CreateAgentTokenRequest struct {
 	// Requested lifetime in seconds. Zero means the server maximum; larger
 	// values are capped to the server maximum.
 	TtlSeconds int64 `protobuf:"varint,3,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
-	// Requested scopes. Empty means ["db:read"]. Only "db:read" is available
-	// in phase 1.
+	// Requested scopes. Empty means ["db:read"]. "db:write" (submitting
+	// writes for approval) is available when approvals are enabled.
 	Scopes        []string `protobuf:"bytes,4,rep,name=scopes,proto3" json:"scopes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

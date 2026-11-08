@@ -533,5 +533,7 @@
   "duration.second.one": "%d秒",
   "duration.second.other": "%d秒",
   "audit.title.query.kind": "%s 文",
-  "audit.title.explain.kind": "判定の確認: %s 文"
+  "audit.title.explain.kind": "判定の確認: %s 文",
+  "consent.write": "選んだ接続先への書き込みの申請",
+  "consent.write_desc": "申請だけができます。実行には、あなた以外の承認者の承認が必要です（writer ロールを持つ接続先のみ）"
 }

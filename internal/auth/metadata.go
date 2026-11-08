@@ -39,7 +39,7 @@ func (s *Server) handleASMetadata(w http.ResponseWriter, r *http.Request) {
 		RegistrationEndpoint:                   s.issuer + "/register",
 		DeviceAuthorizationEndpoint:            s.issuer + "/device_authorization",
 		RevocationEndpoint:                     s.issuer + "/revoke",
-		ScopesSupported:                        []string{identity.ScopeRead},
+		ScopesSupported:                        s.scopesSupported(),
 		ResponseTypesSupported:                 []string{"code"},
 		ResponseModesSupported:                 []string{"query"},
 		GrantTypesSupported:                    []string{"authorization_code", "refresh_token", GrantTypeDeviceCode},
@@ -59,8 +59,16 @@ func (s *Server) handleProtectedResourceMetadata(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, &oauthex.ProtectedResourceMetadata{
 		Resource:               s.ResourceURL(),
 		AuthorizationServers:   []string{s.issuer},
-		ScopesSupported:        []string{identity.ScopeRead},
+		ScopesSupported:        s.scopesSupported(),
 		BearerMethodsSupported: []string{"header"},
 		ResourceName:           "dbgateway",
 	})
+}
+
+// scopesSupported lists db:read, plus db:write when approvals are enabled.
+func (s *Server) scopesSupported() []string {
+	if s.cfg.Approvals.Enabled {
+		return []string{identity.ScopeRead, identity.ScopeWrite}
+	}
+	return []string{identity.ScopeRead}
 }

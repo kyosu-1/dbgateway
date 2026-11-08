@@ -179,6 +179,11 @@ func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scopes := []string{identity.ScopeRead}
+	if r.PostFormValue("write") == "1" && s.canRequestWrites(human, dbs) {
+		scopes = append(scopes, identity.ScopeWrite)
+	}
+
 	raw, hash := newSecret("")
 	now := s.now()
 	if err := s.store.CreateAuthCode(r.Context(), &store.AuthCode{
@@ -187,7 +192,7 @@ func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request) {
 		ClientName:    c.Name,
 		RedirectURI:   ar.RedirectURI,
 		CodeChallenge: ar.CodeChallenge,
-		Scopes:        []string{identity.ScopeRead},
+		Scopes:        scopes,
 		Resource:      ar.Resource,
 		Email:         sess.email,
 		AgentName:     agentName,
@@ -226,6 +231,22 @@ func (s *Server) redirectClient(w http.ResponseWriter, r *http.Request, ar authz
 	q.Set("iss", s.issuer)
 	u.RawQuery = q.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
+// canRequestWrites reports whether an agent of human may be granted the
+// write-request scope for any of dbs: approvals must be enabled and the
+// human must hold the writer role there. Writes still always need a human
+// approval; the scope only lets the agent submit them.
+func (s *Server) canRequestWrites(human *identity.Principal, dbs []string) bool {
+	if !s.cfg.Approvals.Enabled {
+		return false
+	}
+	for _, name := range dbs {
+		if db := s.cfg.Database(name); db != nil && s.rbac.Has(human, db, identity.RoleWriter) {
+			return true
+		}
+	}
+	return false
 }
 
 // consentDB is one database row on the consent page.
@@ -273,6 +294,8 @@ func (s *Server) renderConsent(w http.ResponseWriter, r *http.Request, status in
 		"AgentName":    agentName,
 		"Databases":    dbs,
 		"HasAny":       len(accessible) > 0,
+		"CanWrite":     s.canRequestWrites(human, accessible),
+		"WriteChecked": r.PostFormValue("write") == "1" || (r.Method == http.MethodGet && slices.Contains(strings.Fields(ar.Scope), identity.ScopeWrite)),
 		"MaxTTL":       s.cfg.Auth.AgentTokens.MaxTTL.D(),
 		"Hidden":       authzQuery(ar),
 		"CSRF":         sess.csrf(),

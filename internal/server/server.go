@@ -275,7 +275,28 @@ func (s *Server) Close() {
 	s.closers = nil
 }
 
-// Run serves until ctx is cancelled, then shuts down gracefully.
+// startBackground starts the loops that run beside the HTTP server.
+func (s *Server) startBackground(ctx context.Context) {
+	go s.auth.RunCleanup(ctx, 10*time.Minute) // expired sessions, codes and tokens
+	if s.approvals != nil {
+		go s.approvals.Run(ctx) // expiry, and resuming approved executions
+	}
+	if s.notifier != nil {
+		go func() { _ = s.notifier.Run(ctx) }() // Slack Socket Mode (outbound only)
+	}
+}
+
+// RunBackground runs only the background loops (approval execution and
+// expiry, cleanup, Slack) until ctx is cancelled, for callers that serve
+// Handler() themselves (e.g. tests or an embedding program).
+func (s *Server) RunBackground(ctx context.Context) error {
+	s.startBackground(ctx)
+	<-ctx.Done()
+	return nil
+}
+
+// Run serves HTTP (and the PostgreSQL proxy when enabled) with the
+// background loops until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              s.cfg.Server.Listen,
@@ -285,13 +306,7 @@ func (s *Server) Run(ctx context.Context) error {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
-	go s.auth.RunCleanup(ctx, 10*time.Minute) // expired sessions, codes and tokens
-	if s.approvals != nil {
-		go s.approvals.Run(ctx) // expiry, and resuming approved executions
-	}
-	if s.notifier != nil {
-		go func() { _ = s.notifier.Run(ctx) }() // Slack Socket Mode (outbound only)
-	}
+	s.startBackground(ctx)
 
 	errc := make(chan error, 2)
 	if s.pgproxy != nil {

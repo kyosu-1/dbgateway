@@ -32,6 +32,7 @@ func MCPCmd() *cobra.Command {
 
 func mcpStdioCmd() *cobra.Command {
 	var server, agent, databases string
+	var write bool
 	cmd := &cobra.Command{
 		Use:   "stdio",
 		Short: "Relay MCP over stdio to dbgateway, as an agent acting for you",
@@ -53,13 +54,14 @@ func mcpStdioCmd() *cobra.Command {
 			if len(dbs) == 0 {
 				return errors.New("--databases is required (comma-separated databases the agent may read)")
 			}
-			ts := &agentTokenSource{client: tokenServiceClient(c), agent: agent, databases: dbs}
+			ts := &agentTokenSource{client: tokenServiceClient(c), agent: agent, databases: dbs, scopes: scopesFor(write)}
 			return runStdioRelay(cmd.Context(), log, c.Server+"/mcp", ts, &mcp.StdioTransport{})
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "dbgateway URL (default: the logged-in server)")
 	cmd.Flags().StringVar(&agent, "agent", "mcp-stdio", "agent name recorded in audit logs")
 	cmd.Flags().StringVar(&databases, "databases", "", "comma-separated databases the agent may read (required)")
+	cmd.Flags().BoolVar(&write, "write", false, "also let the agent submit writes for approval (db:write; needs approvals and the writer role)")
 	return cmd
 }
 
@@ -69,6 +71,7 @@ type agentTokenSource struct {
 	client    dbgatewayv1connect.TokenServiceClient
 	agent     string
 	databases []string
+	scopes    []string
 
 	mu       sync.Mutex
 	token    string
@@ -87,6 +90,7 @@ func (s *agentTokenSource) Token(ctx context.Context) (string, error) {
 	resp, err := s.client.CreateAgentToken(ctx, connect.NewRequest(&dbgatewayv1.CreateAgentTokenRequest{
 		AgentName: s.agent,
 		Databases: s.databases,
+		Scopes:    s.scopes,
 	}))
 	if err != nil {
 		s.token = ""
@@ -273,4 +277,12 @@ func version() string {
 		return bi.Main.Version
 	}
 	return "dev"
+}
+
+// scopesFor returns the scopes to request for an agent token.
+func scopesFor(write bool) []string {
+	if write {
+		return []string{"db:read", "db:write"}
+	}
+	return []string{"db:read"}
 }
