@@ -1,5 +1,6 @@
-// Package cli implements the dbgw client subcommands: login, logout, token
-// and mcp stdio. cmd/dbgw wires them into the root command.
+// Package cli implements the dbgw client subcommands: login, logout, token,
+// mcp stdio, and the human query commands (query, explain, dbs, search,
+// requests, request). cmd/dbgw wires them into the root command.
 package cli
 
 import (
