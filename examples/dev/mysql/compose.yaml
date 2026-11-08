@@ -1,0 +1,22 @@
+# Local MySQL for development and the MySQL adapter integration tests.
+#
+#   docker compose -f examples/dev/mysql/compose.yaml up -d --wait
+#   go test -tags integration ./internal/adapter/mysql/
+#
+# MySQL 8.4 is the current LTS release.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: app
+    ports:
+      - "127.0.0.1:53306:3306"
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Ready only after the init scripts ran (the read-only user exists).
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -udbgw_reader -preader -e 'SELECT 1 FROM app.support_tickets LIMIT 1' app"]
+      interval: 2s
+      timeout: 3s
+      retries: 60

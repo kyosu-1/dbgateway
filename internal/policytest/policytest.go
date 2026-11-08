@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/kyosu-1/dbgateway/internal/adapter/mysql"
 	"github.com/kyosu-1/dbgateway/internal/adapter/postgres"
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/config"
@@ -171,7 +172,10 @@ func Run(ctx context.Context, f *File, cfg *config.Config) ([]Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	analyzer := postgres.NewAnalyzer(postgres.NewFunctionAllowlist(cfg.SQL.AllowedFunctions))
+	analyzers := map[string]gateway.Analyzer{
+		"postgres": postgres.NewAnalyzer(postgres.NewFunctionAllowlist(cfg.SQL.AllowedFunctions)),
+		"mysql":    mysql.NewAnalyzer(mysql.NewFunctionAllowlist(cfg.SQL.AllowedFunctions)),
+	}
 	var results []Result
 	for i, c := range f.Cases {
 		name := c.Name
@@ -199,6 +203,12 @@ func Run(ctx context.Context, f *File, cfg *config.Config) ([]Result, error) {
 			est = func(context.Context, bool) (*analysis.Estimate, error) { return e, nil }
 		} else {
 			est = func(context.Context, bool) (*analysis.Estimate, error) { return &analysis.Estimate{}, nil }
+		}
+		analyzer, ok := analyzers[db.Type]
+		if !ok {
+			fail("no analyzer for database type %q", db.Type)
+			results = append(results, r)
+			continue
 		}
 		out := ev.Evaluate(ctx, p, db, analyzer, c.SQL, cat, est)
 		d := out.Decision

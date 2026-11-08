@@ -678,7 +678,33 @@ func sha256Hex(s string) string {
 // Error messages of some classes (e.g. data exceptions) can quote stored
 // values, which could leak masked data, so only classes known to mention
 // identifiers and types are passed through.
+// ErrorDescriber converts a database-specific error into a message that is
+// safe to return (it must never echo stored values) and a code. ok is false
+// for errors it does not recognize.
+type ErrorDescriber func(err error) (msg, code string, ok bool)
+
+var (
+	describersMu sync.RWMutex
+	describers   []ErrorDescriber
+)
+
+// RegisterErrorDescriber adds a describer for an adapter's errors (e.g.
+// MySQL). PostgreSQL errors are handled built in.
+func RegisterErrorDescriber(d ErrorDescriber) {
+	describersMu.Lock()
+	defer describersMu.Unlock()
+	describers = append(describers, d)
+}
+
 func describeDBError(err error) (string, string) {
+	describersMu.RLock()
+	ds := describers
+	describersMu.RUnlock()
+	for _, d := range ds {
+		if msg, code, ok := d(err); ok {
+			return msg, code
+		}
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch {

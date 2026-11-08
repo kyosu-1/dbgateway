@@ -15,6 +15,7 @@ import (
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kyosu-1/dbgateway/internal/adapter/mysql"
 	"github.com/kyosu-1/dbgateway/internal/adapter/postgres"
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/api"
@@ -32,11 +33,15 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/store"
 )
 
+func init() {
+	gateway.RegisterErrorDescriber(mysql.DescribeError)
+}
+
 // Server is a running dbgateway instance.
 type Server struct {
-	cfg     *config.Config
-	logger  *slog.Logger
-	handler http.Handler
+	cfg       *config.Config
+	logger    *slog.Logger
+	handler   http.Handler
 	closers   []func()
 	auth      *auth.Server
 	pgproxy   *pgproxy.Server   // nil when disabled
@@ -64,10 +69,13 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	s.closers = append(s.closers, func() { _ = auditLog.Close() })
 
 	gw, err := gateway.New(gateway.Options{
-		Config:   cfg,
-		Adapters: map[string]analysis.Adapter{"postgres": postgres.New(cfg.SQL.AllowedFunctions)},
-		Audit:    auditLog,
-		Logger:   logger,
+		Config: cfg,
+		Adapters: map[string]analysis.Adapter{
+			"postgres": postgres.New(cfg.SQL.AllowedFunctions),
+			"mysql":    mysql.New(cfg.SQL.AllowedFunctions),
+		},
+		Audit:  auditLog,
+		Logger: logger,
 	})
 	if err != nil {
 		return nil, err
