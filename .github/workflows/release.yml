@@ -45,7 +45,9 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           echo "ARCHIVE=dist/$name.tar.gz" >> "$GITHUB_ENV"
       - name: Smoke test
-        run: tar -xzOf "$ARCHIVE" --wildcards '*/dbgw' > dbgw && chmod +x dbgw && ./dbgw --version
+        run: |
+          mkdir -p smoke && tar -xzf "$ARCHIVE" -C smoke
+          smoke/*/dbgw --version
       - if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@v2
         with:
