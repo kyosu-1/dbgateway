@@ -83,7 +83,7 @@ NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
   5. `ROLLBACK`
 - **接続は1回使うごとに破棄します。** MySQL には SQL からセッションをリセットする文（PostgreSQL の `DISCARD ALL` 相当）がなく、go-sql-driver は `COM_RESET_CONNECTION` を送らないため、プールに戻さずに閉じます。リクエストごとに接続を張り直す分（TLS ありで数ミリ秒〜数十ミリ秒）遅くなりますが、セッション状態が次のリクエストに漏れることはありません。
 - `LOAD DATA LOCAL INFILE` はクライアント側でも拒否されます（`allowAllFiles` は無効、読み取り可能なファイルの登録なし）。
-- 書き込み（承認後の実行）は、まだ MySQL では実行できません（`write execution is not supported yet for mysql`）。
+- 書き込み（承認後の実行）は、`write_user` で読み書きのトランザクションを開き、影響行数（一致した行数。`CLIENT_FOUND_ROWS` を有効にしているため、値が変わらない行も数える）が上限以下のときだけコミットします。MySQL には RETURNING がないため、結果の行は返しません。書き込みの見積もり（EXPLAIN）は、MySQL が READ ONLY トランザクションでの書き込みの EXPLAIN を拒否するため、`write_user` の読み書きのトランザクションで行い、必ずロールバックします。
 - 見積もり（`estimate`）は `EXPLAIN FORMAT=JSON` から求めます。行数は外側の問い合わせの表ごとの `rows_produced_per_join`（なければ `rows_examined_per_scan`）の最大値、コストは `query_cost` です（`explain_json_format_version=2` の `estimated_rows` / `estimated_total_cost` にも対応）。統計情報が古いと見積もりも不正確になるので、必要に応じて `ANALYZE TABLE` を実行してください。
 
 ### 値の変換
@@ -167,7 +167,7 @@ PostgreSQL と同じ規則で、結果の各列と、条件・集計・並べ替
 - TiDB のパーサが対応していない構文は解析できず、拒否します。例: `JSON_TABLE`、派生表の列名リスト（`AS t(a, b)`）、`SELECT ... INTO @var` / `INTO DUMPFILE`、`BEGIN WORK`、`HANDLER`、`XA`、`CHECKSUM TABLE`、`CREATE TRIGGER` / `CREATE EVENT`。
 - TiDB 独自の構文（`AS OF TIMESTAMP`、`TABLESAMPLE`、ヒント類など）は拒否します。
 - `/*+` や `/*!` を文字列リテラルに含むクエリも拒否します（上記）。
-- 書き込みの実行（承認後の実行）は未対応です。解析と分類は行います。
+- 書き込みの結果の行（RETURNING）は返せません（MySQL に RETURNING がないため）。
 - `sql_mode` は固定で、利用者が変えることはできません（`SET` は拒否）。
 - カタログは `information_schema.COLUMNS` / `TABLES` / `VIEWS` から、読み取り用ユーザーに見える範囲を読みます。`mysql` / `performance_schema` / `sys` / `information_schema` のビューは展開せず、元の表として扱います。`search_objects` では、スキーマを明示しない限りこれらのシステムスキーマを表示しません。
 - `INVISIBLE` 列（`sql_generate_invisible_primary_key` で作られる `my_row_id` を含む）はカタログに入れません。`SELECT *` はこれらの列を返さないため、入れると `*` の展開と実際の結果がずれるからです。名前を明示して参照すると「判断できない」になります。
