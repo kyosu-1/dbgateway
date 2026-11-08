@@ -134,6 +134,9 @@ type Audit struct {
 	LogRawSQL bool `yaml:"log_raw_sql"`
 	// NoFsync disables fsync after each entry (faster, less durable).
 	NoFsync bool `yaml:"no_fsync"`
+	// OTLP additionally forwards entries as OpenTelemetry logs (optional,
+	// best effort).
+	OTLP *AuditOTLP `yaml:"otlp"`
 }
 
 type SQL struct {
@@ -163,7 +166,8 @@ type Endpoint struct {
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
 	DBName   string `yaml:"dbname"`
-	Auth     string `yaml:"auth"` // password | aws_iam (phase 3)
+	Auth     string `yaml:"auth"`   // password | aws_iam | gcp_iam
+	Region   string `yaml:"region"` // aws_iam only (default: AWS SDK config)
 	ReadUser string `yaml:"read_user"`
 	// PasswordEnv names the env var with the read user's password.
 	PasswordEnv string `yaml:"password_env"`
@@ -391,6 +395,9 @@ func (c *Config) validate() error {
 	if c.Audit.Output != "file" && c.Audit.Output != "stdout" {
 		add("audit.output: must be \"file\" or \"stdout\"")
 	}
+	if c.Audit.OTLP != nil {
+		c.Audit.OTLP.validate(add, c.warn)
+	}
 	if c.Masking.HMACKeyEnv != "" && os.Getenv(c.Masking.HMACKeyEnv) == "" {
 		c.warn("masking.hmac_key_env: %s is not set; the hmac method will fall back to redact", c.Masking.HMACKeyEnv)
 	}
@@ -421,13 +428,7 @@ func (c *Config) validate() error {
 			if ep.e.ReadUser == "" {
 				add("%s.read_user: required", pp)
 			}
-			switch ep.e.Auth {
-			case "password":
-			case "aws_iam":
-				add("%s.auth: aws_iam is planned for phase 3; use password with password_env", pp)
-			default:
-				add("%s.auth: must be password or aws_iam", pp)
-			}
+			validateEndpointAuth(pp, ep.e, add, c.warn)
 			switch ep.e.SSLMode {
 			case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
 			default:

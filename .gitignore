@@ -30,3 +30,7 @@ coverage.*
 .DS_Store
 deploy/aws/*.pem
 deploy/aws/tfplan
+/deploy/gcp/terraform.tfvars
+/deploy/gcp/*.auto.tfvars
+deploy/gcp/*.pem
+deploy/gcp/tfplan

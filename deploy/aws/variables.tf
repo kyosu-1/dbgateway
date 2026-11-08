@@ -31,3 +31,9 @@ variable "instance_class" {
   type        = string
   default     = "db.t4g.micro"
 }
+
+variable "iam_auth" {
+  description = "Enable IAM database authentication (setup.sh then creates the dbgw_iam user)"
+  type        = bool
+  default     = true
+}

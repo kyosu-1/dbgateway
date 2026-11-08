@@ -136,7 +136,7 @@ primary:
 
 - `aws_iam`: 接続のたびに RDS の認証トークン（15分有効）を発行して、パスワードの代わりに使う。資格情報は AWS SDK の標準の探索順（環境変数、プロファイル、タスクロールなど）
 - `gcp_iam`: Cloud SQL の IAM データベース認証。Google の標準の認証情報（ADC）でアクセストークンを取得し、パスワードの代わりに使う。ユーザー名はサービスアカウントのメールアドレスから `.gserviceaccount.com` を除いたもの
-- どちらも TLS 必須（`sslmode` は `verify-full` を推奨。Cloud SQL はサーバー証明書のCAを `sslrootcert` に指定する）
+- どちらも TLS 必須（`sslmode` は `verify-full` を推奨。Cloud SQL はサーバー証明書のCAを `sslrootcert` に指定する。インスタンスごとのCAの証明書には IP の SAN がないため `verify-ca` を使う。CAがインスタンス専用なので身元も確かめられる。詳細は [operations.md](operations.md)）
 
 ### 監査ログの出力先の追加
 

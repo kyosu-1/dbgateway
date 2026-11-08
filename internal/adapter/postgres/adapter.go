@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -71,15 +70,7 @@ func newPool(ctx context.Context, ep config.Endpoint, user, passwordEnv string, 
 		Scheme: "postgres",
 		Host:   fmt.Sprintf("%s:%d", ep.Host, ep.Port),
 		Path:   "/" + ep.DBName,
-	}
-	if passwordEnv != "" {
-		pw, ok := os.LookupEnv(passwordEnv)
-		if !ok {
-			return nil, fmt.Errorf("environment variable %s is not set", passwordEnv)
-		}
-		u.User = url.UserPassword(user, pw)
-	} else {
-		u.User = url.User(user)
+		User:   url.User(user),
 	}
 	q := url.Values{}
 	q.Set("sslmode", ep.SSLMode)
@@ -91,7 +82,10 @@ func newPool(ctx context.Context, ep config.Endpoint, user, passwordEnv string, 
 
 	pc, err := pgxpool.ParseConfig(u.String())
 	if err != nil {
-		return nil, errors.New("invalid connection settings") // never echo the DSN (it has the password)
+		return nil, errors.New("invalid connection settings")
+	}
+	if err := configureAuth(ctx, pc, ep, user, passwordEnv); err != nil {
+		return nil, err
 	}
 	pc.MaxConns = 10
 	pc.MaxConnIdleTime = 5 * time.Minute
