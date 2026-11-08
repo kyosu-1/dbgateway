@@ -233,6 +233,24 @@ func TestApprovedWriteFlow(t *testing.T) {
 	}
 }
 
+// Without RETURNING, EXPLAIN reports 0 rows for the ModifyTable node; the
+// limit must come from the rows feeding it.
+func TestMultiRowWriteWithoutReturning(t *testing.T) {
+	su := prepare(t)
+	h := setup(t)
+	resp := h.exec(t, agent, "UPDATE "+table+" SET plan = 'bulk' WHERE id BETWEEN 10 AND 14")
+	if resp.Status != gateway.StatusPending || resp.MaxAffectedRows < 5 {
+		t.Fatalf("submit: %+v", resp)
+	}
+	r := h.approve(t, resp.RequestID)
+	if r.Status != approval.StatusSucceeded || r.Result.RowsAffected != 5 || r.EstimateRows < 4 {
+		t.Fatalf("result: %+v %+v", r, r.Result)
+	}
+	if p := plans(t, su); p[10] != "bulk" || p[14] != "bulk" || p[15] != "free" {
+		t.Fatalf("database: %v", p)
+	}
+}
+
 func TestAffectedRowsLimitRollsBack(t *testing.T) {
 	su := prepare(t)
 	h := setup(t)

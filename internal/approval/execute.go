@@ -180,11 +180,13 @@ func (s *Service) Sweep(ctx context.Context) {
 }
 
 // staleAfter is how long a request may stay running before it is
-// considered abandoned: longer than any statement can run.
+// considered abandoned: longer than an execution can take. An execution
+// runs up to three bounded database operations (catalog, EXPLAIN, the
+// write), each limited to the statement timeout plus 5 seconds.
 func (s *Service) staleAfter() time.Duration {
 	longest := 10 * time.Second
 	for _, db := range s.cfg.Databases {
 		longest = max(longest, db.Limits.StatementTimeout.D())
 	}
-	return longest + time.Minute
+	return 3*(longest+5*time.Second) + time.Minute
 }

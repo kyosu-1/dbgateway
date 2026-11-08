@@ -320,7 +320,8 @@ func collectRows(tx pgx.Tx, rows pgx.Rows, opt analysis.ExecOptions, res *analys
 // Estimate returns the planner estimate via EXPLAIN (FORMAT JSON). The SQL
 // has already been analyzed as a single statement. Writes are planned by
 // the write user (planning checks its privileges) inside a READ ONLY
-// transaction: EXPLAIN without ANALYZE never executes the statement.
+// transaction: EXPLAIN without ANALYZE never executes the statement. For
+// writes, Rows is the number of rows the statement is expected to modify.
 func (a *Adapter) Estimate(ctx context.Context, ac analysis.Conn, sql string, opt analysis.ExecOptions) (*analysis.Estimate, error) {
 	c := ac.(*conn)
 	pool := c.pool(opt.Replica)
@@ -330,26 +331,62 @@ func (a *Adapter) Estimate(ctx context.Context, ac analysis.Conn, sql string, op
 			return nil, err
 		}
 	}
-	var est analysis.Estimate
+	var est *analysis.Estimate
 	err := c.withTx(ctx, pool, pgx.ReadOnly, opt, func(tx pgx.Tx) error {
 		var raw []byte
 		if err := tx.QueryRow(ctx, "EXPLAIN (FORMAT JSON) "+sql).Scan(&raw); err != nil {
 			return err
 		}
-		var plans []struct {
-			Plan struct {
-				Rows float64 `json:"Plan Rows"`
-				Cost float64 `json:"Total Cost"`
-			} `json:"Plan"`
-		}
-		if err := json.Unmarshal(raw, &plans); err != nil || len(plans) == 0 {
-			return fmt.Errorf("unexpected EXPLAIN output")
-		}
-		est.Rows, est.Cost = plans[0].Plan.Rows, plans[0].Plan.Cost
-		return nil
+		var err error
+		est, err = parseExplain(raw, !opt.ReadOnly)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &est, nil
+	return est, nil
+}
+
+// planNode is a node of EXPLAIN (FORMAT JSON) output.
+type planNode struct {
+	NodeType string     `json:"Node Type"`
+	Rows     float64    `json:"Plan Rows"`
+	Cost     float64    `json:"Total Cost"`
+	Plans    []planNode `json:"Plans"`
+}
+
+// parseExplain extracts the estimate. A ModifyTable node reports 0 rows
+// unless the statement has RETURNING, so for writes the rows feeding every
+// ModifyTable node (including those of writable CTEs) are summed instead.
+func parseExplain(raw []byte, write bool) (*analysis.Estimate, error) {
+	var plans []struct {
+		Plan planNode `json:"Plan"`
+	}
+	if err := json.Unmarshal(raw, &plans); err != nil || len(plans) == 0 {
+		return nil, fmt.Errorf("unexpected EXPLAIN output")
+	}
+	top := plans[0].Plan
+	est := &analysis.Estimate{Rows: top.Rows, Cost: top.Cost}
+	if !write {
+		return est, nil
+	}
+	var modified float64
+	found := false
+	var walk func(n planNode)
+	walk = func(n planNode) {
+		if n.NodeType == "ModifyTable" {
+			found = true
+			if len(n.Plans) > 0 {
+				modified += n.Plans[0].Rows
+			}
+		}
+		for _, c := range n.Plans {
+			walk(c)
+		}
+	}
+	walk(top)
+	if found {
+		est.Rows = modified
+	}
+	return est, nil
 }
