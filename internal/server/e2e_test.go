@@ -274,7 +274,7 @@ func TestEndToEnd(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names = append(names, tl.Name)
 	}
-	if strings.Join(names, ",") != "execute_sql,list_databases,search_objects" && len(names) != 3 {
+	if len(names) != 4 || !strings.Contains(strings.Join(names, ","), "explain_policy") {
 		t.Fatalf("tools = %v", names)
 	}
 

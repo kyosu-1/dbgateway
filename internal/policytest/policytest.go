@@ -73,12 +73,14 @@ type Estimate struct {
 
 // Expectancy is the expected outcome. Empty fields are not checked.
 type Expectancy struct {
-	Decision string   `yaml:"decision"` // allow | deny
-	Rule     string   `yaml:"rule"`
-	Stage    string   `yaml:"stage"`
-	Masked   []string `yaml:"masked"`   // output columns that must be masked
-	Withheld []string `yaml:"withheld"` // output columns that must be withheld
-	Visible  []string `yaml:"visible"`  // output columns that must be shown as is
+	Decision     string   `yaml:"decision"` // allow | approve | deny
+	Rule         string   `yaml:"rule"`
+	Stage        string   `yaml:"stage"`
+	Risk         string   `yaml:"risk"`          // low | medium | high
+	ApprovalRule string   `yaml:"approval_rule"` // matched approval rule (approve)
+	Masked       []string `yaml:"masked"`        // output columns that must be masked
+	Withheld     []string `yaml:"withheld"`      // output columns that must be withheld
+	Visible      []string `yaml:"visible"`       // output columns that must be shown as is
 }
 
 // Result is the outcome of one case.
@@ -194,13 +196,20 @@ func Run(ctx context.Context, f *File, cfg *config.Config) ([]Result, error) {
 		var est gateway.EstimateFunc
 		if c.Estimate != nil {
 			e := &analysis.Estimate{Rows: c.Estimate.Rows, Cost: c.Estimate.Cost}
-			est = func(context.Context) (*analysis.Estimate, error) { return e, nil }
+			est = func(context.Context, bool) (*analysis.Estimate, error) { return e, nil }
 		} else {
-			est = func(context.Context) (*analysis.Estimate, error) { return &analysis.Estimate{}, nil }
+			est = func(context.Context, bool) (*analysis.Estimate, error) { return &analysis.Estimate{}, nil }
 		}
 		out := ev.Evaluate(ctx, p, db, analyzer, c.SQL, cat, est)
 		d := out.Decision
-		r.Got = fmt.Sprintf("%s (stage=%s rule=%s)", d.Action, d.Stage, d.Rule)
+		approvalRule := ""
+		if d.ApprovalRule != nil {
+			approvalRule = d.ApprovalRule.Name
+		}
+		r.Got = fmt.Sprintf("%s (stage=%s rule=%s risk=%s)", d.Action, d.Stage, d.Rule, d.Risk)
+		if approvalRule != "" {
+			r.Got += " approval_rule=" + approvalRule
+		}
 		if d.ShadowDeniedBy != "" {
 			r.Got += " shadow_denied_by=" + d.ShadowDeniedBy
 		}
@@ -213,6 +222,12 @@ func Run(ctx context.Context, f *File, cfg *config.Config) ([]Result, error) {
 		}
 		if exp.Stage != "" && exp.Stage != string(d.Stage) {
 			fail("stage: got %s, want %s", d.Stage, exp.Stage)
+		}
+		if exp.Risk != "" && exp.Risk != d.Risk {
+			fail("risk: got %s, want %s", d.Risk, exp.Risk)
+		}
+		if exp.ApprovalRule != "" && exp.ApprovalRule != approvalRule {
+			fail("approval_rule: got %q, want %s", approvalRule, exp.ApprovalRule)
 		}
 		if len(exp.Masked)+len(exp.Withheld)+len(exp.Visible) > 0 {
 			checkMasking(ev, db, p, out, exp, fail)

@@ -40,4 +40,4 @@ dev-db-down: ## Stop the local PostgreSQL and delete its data
 	$(COMPOSE) down -v
 
 run-dev: build dev-db ## Run dbgateway locally with the dev configuration
-	DBGW_DEV_READER_PASSWORD=reader $(BIN) serve --config $(DEV_CFG) --log-level debug
+	DBGW_DEV_READER_PASSWORD=reader DBGW_DEV_WRITER_PASSWORD=writer $(BIN) serve --config $(DEV_CFG) --log-level debug

@@ -15,7 +15,10 @@ catalog:
 
 principals:
   taro-agent: { kind: agent, human: taro@example.com, agent: claude-code, groups: [data-team] }
+  taro-agent-write: { kind: agent, human: taro@example.com, agent: claude-code, groups: [data-team], scopes: ["db:read", "db:write"] }
   taro: { kind: human, human: taro@example.com, groups: [data-team] }
+  hanako: { kind: human, human: hanako@example.com, groups: [sre] }
+  jiro: { kind: human, human: jiro@example.com, groups: [] }   # personal querier binding on staging
   outsider: { kind: human, human: eve@example.com, groups: [] }
 
 cases:
@@ -73,11 +76,58 @@ cases:
     sql: "SELECT reason, count(*) FROM subscriptions WHERE status = 'churned' GROUP BY reason"
     expect: { decision: deny, rule: "builtin:sensitive-predicate" }  # reason is unclassified → masked for agents on prod
 
-  - name: writes are not enabled in phase 1
+  - name: a human's small write needs one approver
     principal: taro
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
-    expect: { decision: deny, rule: "builtin:approval-not-enabled" }
+    estimate: { rows: 1 }
+    expect: { decision: approve, rule: writes, risk: medium, approval_rule: prod-default }
+
+  - name: an agent's write on prod is high risk
+    principal: taro-agent-write
+    database: prod-main
+    sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
+    estimate: { rows: 1 }
+    expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
+
+  - name: an agent token without the write scope cannot request writes
+    principal: taro-agent
+    database: prod-main
+    sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
+    expect: { decision: deny, stage: role, rule: "role:writer" }
+
+  - name: a large write is high risk
+    principal: taro
+    database: prod-main
+    sql: "UPDATE users SET plan = 'pro' WHERE created_at < now()"
+    estimate: { rows: 5000 }
+    expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
+
+  - name: writing a masked column is high risk
+    principal: taro
+    database: prod-main
+    sql: "UPDATE users SET email = 'new@example.com' WHERE id = 1"
+    estimate: { rows: 1 }
+    expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
+
+  - name: an agent may not filter a write on a masked column
+    principal: taro-agent-write
+    database: prod-main
+    sql: "UPDATE users SET plan = 'pro' WHERE email = 'a@example.com'"
+    expect: { decision: deny, rule: "builtin:sensitive-predicate" }
+
+  - name: staging writes use the non-prod rule
+    principal: hanako
+    database: staging
+    sql: "DELETE FROM subscriptions WHERE id = 1"
+    estimate: { rows: 1 }
+    expect: { decision: approve, risk: medium, approval_rule: non-prod }
+
+  - name: querier without writer cannot request writes
+    principal: jiro
+    database: staging
+    sql: "DELETE FROM subscriptions WHERE id = 1"
+    expect: { decision: deny, stage: role, rule: "role:writer" }
 
   - name: unbounded write
     principal: taro

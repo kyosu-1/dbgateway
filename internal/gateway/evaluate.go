@@ -39,8 +39,9 @@ func NewEvaluator(cfg *config.Config) (*Evaluator, error) {
 	return &Evaluator{Config: cfg, RBAC: policy.NewRBAC(cfg), Engine: eng, Classifier: mask.NewClassifier(cfg)}, nil
 }
 
-// EstimateFunc returns the planner estimate on demand.
-type EstimateFunc func(ctx context.Context) (*analysis.Estimate, error)
+// EstimateFunc returns the planner estimate on demand. write is true for
+// write statements, which are planned by the write user.
+type EstimateFunc func(ctx context.Context, write bool) (*analysis.Estimate, error)
 
 // Evaluation is the outcome of Evaluate.
 type Evaluation struct {
@@ -52,6 +53,20 @@ type Evaluation struct {
 
 // Allowed reports whether the statement may be executed.
 func (e *Evaluation) Allowed() bool { return e.Decision.Action == config.ActionAllow }
+
+// NeedsApproval reports whether the statement may be executed after
+// approval (the decision is approve and an approval rule matched).
+func (e *Evaluation) NeedsApproval() bool {
+	return e.Decision.Action == config.ActionApprove && e.Decision.ApprovalRule != nil
+}
+
+// EstimateRows returns the planner's row estimate, or 0 when unknown.
+func (e *Evaluation) EstimateRows() float64 {
+	if e.Estimate == nil {
+		return 0
+	}
+	return e.Estimate.Rows
+}
 
 func deny(stage analysis.Stage, rule, msg, hint string) policy.Decision {
 	return policy.Decision{Action: config.ActionDeny, Stage: stage, Rule: rule, Message: msg, Hint: hint}
@@ -79,18 +94,42 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 	ev.Analysis = qa
 	ev.Columns = e.classifyColumns(db, p.Kind, qa.Statement.Columns)
 
+	st := &qa.Statement
+	approvals := e.Config.Approvals.Enabled
+	if st.IsWrite && approvals {
+		if !e.RBAC.Has(p, db, identity.RoleWriter) {
+			hint := "書き込みが必要な場合は、管理者に writer ロールの割り当てを依頼してください。"
+			if p.IsAgent() {
+				hint = "エージェントのトークンに書き込みのスコープ（" + identity.ScopeWrite + "）がないか、代理元の人に writer ロールがありません。書き込みが必要な場合は、人に依頼してください。"
+			}
+			ev.Decision = deny(analysis.StageRole, "role:writer",
+				fmt.Sprintf("接続先 %s で書き込みを申請する権限（writer）がありません。", db.Name), hint)
+			return ev
+		}
+		if db.Primary.WriteUser == "" {
+			ev.Decision = deny(analysis.StagePolicy, "builtin:no-write-user",
+				fmt.Sprintf("接続先 %s には書き込み用のユーザーが設定されていないため、書き込みはできません。", db.Name),
+				"管理者に問い合わせてください。")
+			return ev
+		}
+	}
+
 	in := policy.Input{
 		Principal: policy.Principal{Kind: string(p.Kind), Human: p.Human, Agent: p.Agent, ClientID: p.ClientID, Groups: p.Groups},
 		Database:  policy.Database{Name: db.Name, Type: db.Type, Labels: labels(db)},
-		Stmt:      stmtInput(&qa.Statement),
+		Stmt:      stmtInput(st),
 		Columns:   ev.Columns,
-		Risk:      "low", // risk levels arrive with approvals (phase 2)
 	}
-	if e.Engine.NeedsEstimate() && estimate != nil && qa.Statement.Kind == analysis.KindSelect && !qa.Statement.Unknown {
-		est, err := estimate(ctx)
+	// Writes are always estimated when approvals are enabled: the risk level
+	// and the affected-rows limit depend on it. TRUNCATE cannot be
+	// explained (and is denied by the policy engine).
+	needEstimate := !st.Unknown && ((e.Engine.NeedsEstimate() && st.Kind == analysis.KindSelect && !st.IsWrite) ||
+		(approvals && st.IsWrite && st.Kind != analysis.KindTruncate))
+	if needEstimate && estimate != nil {
+		est, err := estimate(ctx, st.IsWrite)
 		if err != nil {
 			ev.Decision = deny(analysis.StagePolicy, "builtin:estimate-failed",
-				"実行計画の見積もり（EXPLAIN）に失敗したため、安全のため実行しません。",
+				fmt.Sprintf("実行計画の見積もり（EXPLAIN）に失敗したため、安全のため実行しません（%s）。", sanitizeDBError(err)),
 				"SQLが正しいか確認してください。")
 			return ev
 		}

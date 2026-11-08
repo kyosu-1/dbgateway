@@ -41,12 +41,13 @@ func (r *RBAC) ResolveGroups(email string, idpGroups []string) []string {
 	return out
 }
 
-// humanRoles returns the roles granted to the given groups on db.
-func (r *RBAC) humanRoles(groups []string, db *config.Database) []identity.Role {
+// humanRoles returns the roles granted on db to the human with the given
+// e-mail, through group bindings or user bindings.
+func (r *RBAC) humanRoles(email string, groups []string, db *config.Database) []identity.Role {
 	now := r.now()
 	var out []identity.Role
 	for _, rb := range r.cfg.RoleBindings {
-		if !slices.Contains(groups, rb.Group) || !rb.Databases.Matches(db) {
+		if !bindingApplies(rb.Group, rb.User, email, groups) || !rb.Databases.Matches(db) {
 			continue
 		}
 		if rb.ExpiresAt != nil && !now.Before(*rb.ExpiresAt) {
@@ -70,7 +71,7 @@ func (r *RBAC) Roles(p *identity.Principal, db *config.Database) []identity.Role
 	if p == nil || db == nil || !p.AllowsDatabase(db.Name) {
 		return nil
 	}
-	roles := r.humanRoles(p.Groups, db)
+	roles := r.humanRoles(p.Human, p.Groups, db)
 	if !p.IsAgent() {
 		return roles
 	}
@@ -94,6 +95,62 @@ func (r *RBAC) Roles(p *identity.Principal, db *config.Database) []identity.Role
 // Has reports whether p has role on db.
 func (r *RBAC) Has(p *identity.Principal, db *config.Database, role identity.Role) bool {
 	return slices.Contains(r.Roles(p, db), role)
+}
+
+// bindingApplies reports whether a binding for group or user covers the
+// human with the given e-mail and groups.
+func bindingApplies(group, user, email string, groups []string) bool {
+	if user != "" {
+		return email != "" && strings.EqualFold(user, email)
+	}
+	return group != "" && slices.Contains(groups, group)
+}
+
+// HumanHas reports whether the human with the given e-mail and dbgateway
+// groups holds role on db (no token narrowing). Used to find approvers.
+func (r *RBAC) HumanHas(email string, groups []string, db *config.Database, role identity.Role) bool {
+	return slices.Contains(r.humanRoles(email, groups, db), role)
+}
+
+// HasUnmask reports whether p may see masked columns of db unmasked.
+// Unmask is granted separately from roles and only ever to humans.
+func (r *RBAC) HasUnmask(p *identity.Principal, db *config.Database) bool {
+	if p == nil || db == nil || p.Kind != identity.KindHuman {
+		return false
+	}
+	now := r.now()
+	for _, u := range r.cfg.Unmask {
+		if !bindingApplies(u.Group, u.User, p.Human, p.Groups) || !u.Databases.Matches(db) {
+			continue
+		}
+		if u.ExpiresAt != nil && !now.Before(*u.ExpiresAt) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// KnownHumans returns the e-mail addresses named in the configuration
+// (static group members and user bindings), lower-cased and sorted.
+func (r *RBAC) KnownHumans() []string {
+	var out []string
+	add := func(e string) {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e != "" && !slices.Contains(out, e) {
+			out = append(out, e)
+		}
+	}
+	for _, g := range r.cfg.Groups {
+		for _, m := range g.Members {
+			add(m)
+		}
+	}
+	for _, rb := range r.cfg.RoleBindings {
+		add(rb.User)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Accessible returns the databases on which p has at least one role.

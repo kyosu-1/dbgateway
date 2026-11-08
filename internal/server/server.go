@@ -18,9 +18,11 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/adapter/postgres"
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/api"
+	"github.com/kyosu-1/dbgateway/internal/approval"
 	"github.com/kyosu-1/dbgateway/internal/audit"
 	"github.com/kyosu-1/dbgateway/internal/auth"
 	"github.com/kyosu-1/dbgateway/internal/config"
+	"github.com/kyosu-1/dbgateway/internal/events"
 	"github.com/kyosu-1/dbgateway/internal/gateway"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
@@ -35,9 +37,10 @@ type Server struct {
 	cfg     *config.Config
 	logger  *slog.Logger
 	handler http.Handler
-	closers []func()
-	auth    *auth.Server
-	pgproxy *pgproxy.Server // nil when disabled
+	closers   []func()
+	auth      *auth.Server
+	pgproxy   *pgproxy.Server   // nil when disabled
+	approvals *approval.Service // nil when approvals are disabled
 }
 
 // New builds the server from a validated configuration.
@@ -93,7 +96,13 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	mux := http.NewServeMux()
 	authSrv.Register(mux)
 
-	mcpSrv := mcpserver.NewServer(gw, auth.PrincipalFromTokenInfo)
+	var mcpOpts []mcpserver.Option
+	if cfg.Approvals.Enabled {
+		s.approvals = approval.New(approval.Options{Config: cfg, Store: st, Executor: gw, Audit: auditLog, Events: events.Nop{}, Logger: logger})
+		gw.SetApprovals(s.approvals)
+		mcpOpts = append(mcpOpts, mcpserver.WithApprovals(s.approvals))
+	}
+	mcpSrv := mcpserver.NewServer(gw, auth.PrincipalFromTokenInfo, mcpOpts...)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpSrv },
 		&mcp.StreamableHTTPOptions{Stateless: true, Logger: logger, PropagateRequestCancellation: true})
 	bearer := mcpauth.RequireBearerToken(authSrv.VerifyToken, &mcpauth.RequireBearerTokenOptions{
@@ -172,6 +181,9 @@ func (s *Server) Run(ctx context.Context) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	go s.auth.RunCleanup(ctx, 10*time.Minute) // expired sessions, codes and tokens
+	if s.approvals != nil {
+		go s.approvals.Run(ctx) // expiry, and resuming approved executions
+	}
 
 	errc := make(chan error, 2)
 	if s.pgproxy != nil {
