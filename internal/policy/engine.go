@@ -89,6 +89,10 @@ type Decision struct {
 	Message string
 	Hint    string
 	Require config.Require
+	// Risk is the computed risk level (low | medium | high).
+	Risk string
+	// ApprovalRule is the matched approval rule when Action is approve.
+	ApprovalRule *config.ApprovalRule
 	// ShadowDeniedBy is set in shadow mode when a rule (or no match) would
 	// have denied this read; the request is allowed and the would-be denial
 	// is recorded in the audit log.
@@ -100,11 +104,21 @@ type compiledRule struct {
 	prg  cel.Program
 }
 
+type compiledApprovalRule struct {
+	rule *config.ApprovalRule
+	prg  cel.Program
+}
+
 // Engine evaluates the configured rules top to bottom, first match wins.
 type Engine struct {
 	rules         []compiledRule
 	mode          config.Mode
 	needsEstimate bool
+
+	approvals     bool
+	riskHigh      []cel.Program
+	riskMedium    []cel.Program
+	approvalRules []compiledApprovalRule
 }
 
 // Built-in rule names (always enforced, also in shadow mode).
@@ -115,10 +129,25 @@ const (
 	RuleWriteNotEnabled    = "builtin:approval-not-enabled"
 	RuleStepUpNotEnabled   = "builtin:step-up-not-enabled"
 	RuleWriteGuard         = "builtin:write-guard"
+	RuleNoApprovalRoute    = "builtin:no-approval-route"
+	RuleApprovalRuleError  = "builtin:approval-rule-error"
+	RuleApproveNotWrite    = "builtin:approve-non-write"
+	RuleTruncate           = "builtin:truncate"
 )
 
+// newEnv returns the CEL environment of policy rules and approval rules.
 func newEnv() (*cel.Env, error) {
-	return cel.NewEnv(
+	return newEnvOpts(cel.Variable("risk", cel.StringType))
+}
+
+// newRiskEnv is the environment of risk conditions: everything except
+// `risk` itself.
+func newRiskEnv() (*cel.Env, error) {
+	return newEnvOpts()
+}
+
+func newEnvOpts(extra ...cel.EnvOption) (*cel.Env, error) {
+	opts := []cel.EnvOption{
 		ext.NativeTypes(ext.ParseStructTags(true),
 			reflect.TypeFor[Principal](), reflect.TypeFor[Database](), reflect.TypeFor[Stmt](),
 			reflect.TypeFor[Table](), reflect.TypeFor[Column](), reflect.TypeFor[Estimate]()),
@@ -130,8 +159,8 @@ func newEnv() (*cel.Env, error) {
 		cel.Variable("stmt", cel.ObjectType("policy.Stmt")),
 		cel.Variable("columns", cel.ListType(cel.ObjectType("policy.Column"))),
 		cel.Variable("estimate", cel.ObjectType("policy.Estimate")),
-		cel.Variable("risk", cel.StringType),
-	)
+	}
+	return cel.NewEnv(append(opts, extra...)...)
 }
 
 // Compile type-checks every rule and verifies that no allow rule can ever
@@ -141,21 +170,12 @@ func Compile(cfg *config.Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Engine{mode: cfg.Server.Mode}
+	e := &Engine{mode: cfg.Server.Mode, approvals: cfg.Approvals.Enabled}
 	var errs []error
 	for i, r := range cfg.Policies {
-		ast, iss := env.Compile(r.When)
-		if iss.Err() != nil {
-			errs = append(errs, fmt.Errorf("policies[%d] (%s).when: %w", i, r.Name, iss.Err()))
-			continue
-		}
-		if ast.OutputType() != cel.BoolType {
-			errs = append(errs, fmt.Errorf("policies[%d] (%s).when: must be a boolean expression", i, r.Name))
-			continue
-		}
-		prg, err := env.Program(ast, cel.EvalOptions(cel.OptOptimize))
+		ast, prg, err := compileBool(env, r.When)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("policies[%d] (%s): %w", i, r.Name, err))
+			errs = append(errs, fmt.Errorf("policies[%d] (%s).when: %w", i, r.Name, err))
 			continue
 		}
 		if r.Action == config.ActionAllow {
@@ -169,10 +189,29 @@ func Compile(cfg *config.Config) (*Engine, error) {
 		}
 		e.rules = append(e.rules, compiledRule{rule: r, prg: prg})
 	}
+	if err := e.compileApprovals(env, cfg); err != nil {
+		errs = append(errs, err)
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	return e, nil
+}
+
+// compileBool compiles a CEL condition that must evaluate to a boolean.
+func compileBool(env *cel.Env, expr string) (*cel.Ast, cel.Program, error) {
+	ast, iss := env.Compile(expr)
+	if iss.Err() != nil {
+		return nil, nil, iss.Err()
+	}
+	if ast.OutputType() != cel.BoolType {
+		return nil, nil, errors.New("must be a boolean expression")
+	}
+	prg, err := env.Program(ast, cel.EvalOptions(cel.OptOptimize))
+	if err != nil {
+		return nil, nil, err
+	}
+	return ast, prg, nil
 }
 
 // checkAllowExcludesWrites partially evaluates the condition with only the
@@ -240,11 +279,17 @@ func (in Input) activation() map[string]any {
 
 // Evaluate returns the decision for in.
 //
-// Order: the first matching configured rule decides. A rule whose
-// condition fails to evaluate (e.g. a missing label) matches if it is a
-// deny rule and is skipped otherwise (fail closed). Then built-in guards
-// apply to anything that would be allowed.
+// Order: when approvals are enabled the risk level is computed first (so
+// rules can use `risk`). Then the first matching configured rule decides.
+// A rule whose condition fails to evaluate (e.g. a missing label) matches
+// if it is a deny rule and is skipped otherwise (fail closed). Then
+// built-in guards apply to anything that would be allowed or approved, and
+// an approve decision is routed to the first matching approval rule.
 func (e *Engine) Evaluate(in Input) Decision {
+	in.Risk = config.RiskLow
+	if e.approvals {
+		in.Risk = e.risk(in)
+	}
 	act := in.activation()
 	d := Decision{
 		Action:  config.ActionDeny,
@@ -269,34 +314,44 @@ func (e *Engine) Evaluate(in Input) Decision {
 		}
 		break
 	}
+	d = e.decide(in, d)
+	d.Risk = in.Risk
+	return d
+}
 
+func (e *Engine) decide(in Input, d Decision) Decision {
 	isRead := in.Stmt.Kind == string(analysis.KindSelect) && !in.Stmt.IsWrite
 	if d.Action == config.ActionDeny {
 		if e.mode == config.ModeShadow && isRead {
 			d = Decision{Action: config.ActionAllow, Stage: analysis.StagePolicy, Rule: d.Rule, ShadowDeniedBy: d.Rule}
 		} else {
 			if d.Hint == "" {
-				d.Hint = defaultHint(in.Stmt)
+				d.Hint = e.defaultHint(in.Stmt)
 			}
 			return d
 		}
 	}
 
 	if d.Action == config.ActionApprove || !isRead {
-		return Decision{
-			Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleWriteNotEnabled,
-			Message: "書き込みには承認機能が必要ですが、承認機能はまだ有効ではありません（フェーズ1は読み取りのみ）。",
-			Hint:    "読み取りのSELECT文で実行するか、変更内容を人に依頼してください。",
+		if !e.approvals {
+			return Decision{
+				Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleWriteNotEnabled,
+				Message: "書き込みには承認機能が必要ですが、承認機能が有効になっていません（approvals.enabled）。",
+				Hint:    "読み取りのSELECT文で実行するか、変更内容を人に依頼してください。",
+			}
 		}
+		return e.approve(in, d)
 	}
 	if g := e.guards(in); g != nil {
 		g.ShadowDeniedBy = d.ShadowDeniedBy
 		return *g
 	}
 	if d.Require.StepUp {
+		// Step-up of the requester is not implemented. For writes the
+		// approvers' step-up covers it (see approve).
 		return Decision{
 			Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleStepUpNotEnabled,
-			Message: fmt.Sprintf("ポリシー %q は本人の再確認（ステップアップ認証）を求めていますが、この機能はまだ有効ではありません。", d.Rule),
+			Message: fmt.Sprintf("ポリシー %q は本人の再確認（ステップアップ認証）を求めていますが、読み取りでのステップアップ認証には対応していません。", d.Rule),
 			Hint:    "管理者に問い合わせてください。",
 		}
 	}
@@ -310,6 +365,14 @@ func (e *Engine) guards(in Input) *Decision {
 		return &Decision{Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleWriteGuard,
 			Message: "読み取り以外の文は実行できません。", Hint: "SELECT文で表現してください。"}
 	}
+	return commonGuards(in)
+}
+
+// commonGuards apply to allowed reads and to writes awaiting approval:
+// statements that could not be fully analyzed are never executed, and
+// agents may not use sensitive columns in predicates (a result order or an
+// affected-row count would reveal their values).
+func commonGuards(in Input) *Decision {
 	if in.Stmt.Unknown {
 		return &Decision{Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleUnknown,
 			Message: "SQLの一部（参照する表や列）を判断できなかったため、自動では実行しません。",
@@ -332,14 +395,17 @@ func (e *Engine) guards(in Input) *Decision {
 	return nil
 }
 
-func defaultHint(st Stmt) string {
+func (e *Engine) defaultHint(st Stmt) string {
 	switch {
 	case st.Kind == string(analysis.KindDDL):
 		return "スキーマ変更はdbgatewayでは実行しません。マイグレーションファイルを作成し、PRでレビューを受けて適用してください。"
 	case st.IsWrite && !st.HasWhere:
 		return "WHEREがありません。対象の行を絞ってください。"
-	case st.IsWrite:
+	case st.IsWrite && !e.approvals:
 		return "書き込みは承認機能の有効化後に申請できます。"
+	case st.IsWrite:
+		return "この書き込みはポリシーで許可されていません。必要な場合は管理者に問い合わせてください。"
 	}
 	return "条件を見直すか、管理者に問い合わせてください。"
 }
+

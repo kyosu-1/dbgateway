@@ -72,10 +72,14 @@ type Config struct {
 	SemanticTypes map[string]SemanticType `yaml:"semantic_types"`
 	Policies      []Rule                  `yaml:"policies"`
 
-	// Phase 2 sections. They are accepted so that a full configuration
-	// validates, but are not used yet.
-	Risk          yaml.Node `yaml:"risk"`
-	ApprovalRules yaml.Node `yaml:"approval_rules"`
+	// Phase 2: approvals (see approvals.go).
+	Approvals     Approvals      `yaml:"approvals"`
+	Risk          Risk           `yaml:"risk"`
+	ApprovalRules []ApprovalRule `yaml:"approval_rules"`
+	Unmask        []Unmask       `yaml:"unmask"`
+	BreakGlass    *BreakGlass    `yaml:"break_glass"`
+	// Notifications is accepted so that a full configuration validates,
+	// but is not used yet.
 	Notifications yaml.Node `yaml:"notifications"`
 
 	// Version identifies the loaded file contents (short SHA-256). It is
@@ -189,6 +193,7 @@ type Group struct {
 
 type RoleBinding struct {
 	Group     string           `yaml:"group"`
+	User      string           `yaml:"user"` // e-mail; alternative to group (e.g. JIT grants)
 	Databases DatabaseSelector `yaml:"databases"`
 	Roles     []identity.Role  `yaml:"roles"`
 	ExpiresAt *time.Time       `yaml:"expires_at"`
@@ -347,8 +352,9 @@ func (c *Config) applyDefaults() {
 			db.SearchPath = []string{"public"}
 		}
 	}
+	c.applyApprovalDefaults()
 	if len(c.Policies) == 0 {
-		c.Policies = DefaultPolicies
+		c.Policies = c.defaultPolicies()
 	}
 }
 
@@ -457,7 +463,10 @@ func (c *Config) validate() error {
 	}
 	for i, rb := range c.RoleBindings {
 		p := fmt.Sprintf("role_bindings[%d]", i)
-		if !groupNames[rb.Group] {
+		switch {
+		case (rb.Group == "") == (rb.User == ""):
+			add("%s: exactly one of group or user is required", p)
+		case rb.Group != "" && !groupNames[rb.Group]:
 			add("%s.group: unknown group %q", p, rb.Group)
 		}
 		for _, n := range rb.Databases.Names {
@@ -475,8 +484,8 @@ func (c *Config) validate() error {
 			if !r.Valid() {
 				add("%s.roles: unknown role %q", p, r)
 			}
-			if r == identity.RoleApprover || r == identity.RoleWriter {
-				c.warn("%s.roles: %q has no effect until approvals are enabled (phase 2)", p, r)
+			if (r == identity.RoleApprover || r == identity.RoleWriter) && !c.Approvals.Enabled {
+				c.warn("%s.roles: %q has no effect until approvals.enabled is true", p, r)
 			}
 		}
 	}
@@ -543,9 +552,7 @@ func (c *Config) validate() error {
 		// are done by the policy package (see policy.Compile).
 	}
 
-	if c.Risk.Kind != 0 || c.ApprovalRules.Kind != 0 {
-		c.warn("risk/approval_rules: approvals are planned for phase 2; these sections are ignored and writes are always denied")
-	}
+	c.validateApprovals(groupNames, dbNames, add)
 	if c.Notifications.Kind != 0 {
 		c.warn("notifications: planned for phase 2; ignored")
 	}
