@@ -13,6 +13,8 @@ auth:
     client_id_env: DBGW_OIDC_CLIENT_ID
     client_secret_env: DBGW_OIDC_CLIENT_SECRET
     groups_claim: groups
+  # passkeys: true              # passkey sign-in and `dbgw passkey enroll` links (needed without an IdP).
+  #                             # Registering passkeys and using them for step-up works regardless.
   agent_tokens:
     max_ttl: 1h                 # lifetime of agent access tokens (extended by refresh)
     refresh: true
@@ -123,6 +125,9 @@ unmask:                         # humans only; never applies to agents
 break_glass:                    # approvers may elevate (web UI, reason + step-up) to write without approval
   max_duration: 1h
   databases: { labels: { env: prod } }
+
+auditors:                       # may use the audit log and user screens (admins may too)
+  - group: sre
 
 default_class:                  # columns without a data class
   human: public

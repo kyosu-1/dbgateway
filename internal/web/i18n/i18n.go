@@ -207,9 +207,17 @@ func (p *Printer) Time(t time.Time) string {
 	return t.Local().Format(p.T("format.datetime"))
 }
 
-// Duration formats a duration in days, hours and minutes, e.g. "1時間30分"
+// Duration formats a duration in days, hours and minutes (seconds below a
+// minute), e.g. "1時間30分"
 // or "1 hour 30 minutes".
 func (p *Printer) Duration(d time.Duration) string {
+	if d > 0 && d < time.Minute {
+		n := int(d.Round(time.Second) / time.Second)
+		if n == 1 {
+			return p.T("duration.second.one", n)
+		}
+		return p.T("duration.second.other", n)
+	}
 	d = d.Round(time.Minute)
 	parts := []struct {
 		n   int

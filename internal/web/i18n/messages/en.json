@@ -210,7 +210,7 @@
   "approval.reason_human": "written by the requester",
   "approval.reason_untranslated": "Shown as written. dbgateway does not translate text written by agents or people.",
   "approval.why_heading": "Why approval is needed",
-  "approval.why": "The approval rule %[1]s matched (%[2]d steps, expires in %[3]s).",
+  "approval.why": "The approval rule %[1]s matched (steps: %[2]d, expires after %[3]s).",
   "approval.steps_label": "Approval steps",
   "approval.step_current": "Waiting",
   "approval.step_done": "(approved)",
@@ -529,5 +529,9 @@
   "enroll.info_device": "Use this device or a security key. Don't register on someone else's device.",
   "enroll.info_expires": "This link works once, until %s.",
   "enroll.optional": "(optional)",
-  "enroll.submit": "Register passkey"
+  "enroll.submit": "Register passkey",
+  "duration.second.one": "%d second",
+  "duration.second.other": "%d seconds",
+  "audit.title.query.kind": "%s statement",
+  "audit.title.explain.kind": "Explain: %s statement"
 }

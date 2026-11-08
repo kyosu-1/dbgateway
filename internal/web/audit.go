@@ -47,8 +47,11 @@ func auditTitle(p *i18n.Printer, e *audit.StoredEntry) string {
 		if e.Event == "explain" {
 			key = "audit.title.explain"
 		}
-		if e.Analysis == nil || len(e.Analysis.Tables) == 0 {
+		if e.Analysis == nil || e.Analysis.Kind == "" {
 			return p.T(key + ".unknown")
+		}
+		if len(e.Analysis.Tables) == 0 {
+			return p.T(key+".kind", strings.ToUpper(e.Analysis.Kind))
 		}
 		tables := tableList(p, e.Analysis.Tables)
 		var s string

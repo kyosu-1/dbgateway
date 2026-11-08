@@ -2,14 +2,11 @@
 <h1 class="visually-hidden">{{t "console.heading"}}</h1>
 <div class="console">
 <aside class="console-side" aria-label="{{t "console.schema"}}">
+<h2 class="schema-db">{{.DB.Name}}</h2>
 <form method="get" action="/console" class="stack-8" role="search">
-<label class="visually-hidden" for="db-select">{{t "console.database"}}</label>
-<select id="db-select" name="db" class="control">
-{{range .Databases}}<option value="{{.Name}}"{{if eq .Name $.DB.Name}} selected{{end}}>{{.Name}}</option>{{end}}
-</select>
+<input type="hidden" name="db" value="{{.DB.Name}}">
 <label class="visually-hidden" for="schema-search">{{t "console.schema_search"}}</label>
 <input id="schema-search" name="q" type="search" class="control" value="{{.Form.Search}}" placeholder="{{t "console.schema_search"}}">
-<button type="submit" class="btn-small">{{t "console.schema_show"}}</button>
 </form>
 {{if .SchemaError}}<p class="small muted">{{t "console.schema_error"}}</p>
 {{else if .Objects}}

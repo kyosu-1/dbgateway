@@ -529,5 +529,9 @@
   "enroll.info_device": "この端末のパスキーか、セキュリティキーを使います。他の人の端末では登録しないでください。",
   "enroll.info_expires": "このリンクは %s まで、1回だけ使えます。",
   "enroll.optional": "（任意）",
-  "enroll.submit": "パスキーを登録"
+  "enroll.submit": "パスキーを登録",
+  "duration.second.one": "%d秒",
+  "duration.second.other": "%d秒",
+  "audit.title.query.kind": "%s 文",
+  "audit.title.explain.kind": "判定の確認: %s 文"
 }
