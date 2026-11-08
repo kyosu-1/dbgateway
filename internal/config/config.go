@@ -72,6 +72,8 @@ type Config struct {
 	SemanticTypes map[string]SemanticType `yaml:"semantic_types"`
 	Policies      []Rule                  `yaml:"policies"`
 	PGProxy       PGProxy                 `yaml:"pgproxy"`
+	SCIM          SCIM                    `yaml:"scim"`
+	PIIDetection  PIIDetection            `yaml:"pii_detection"`
 
 	// Phase 2 sections. They are accepted so that a full configuration
 	// validates, but are not used yet.
@@ -553,6 +555,8 @@ func (c *Config) validate() error {
 	if c.Notifications.Kind != 0 {
 		c.warn("notifications: planned for phase 2; ignored")
 	}
+	c.SCIM.validate(c, add)
+	c.PIIDetection.validate(add)
 	return errors.Join(errs...)
 }
 
