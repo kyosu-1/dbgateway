@@ -320,6 +320,9 @@ func (c *Config) applyDefaults() {
 			}
 			if ep.Port == 0 {
 				ep.Port = 5432
+				if db.Type == "mysql" {
+					ep.Port = 3306
+				}
 			}
 			if ep.Auth == "" {
 				ep.Auth = "password"
@@ -328,7 +331,13 @@ func (c *Config) applyDefaults() {
 				ep.SSLMode = "verify-full"
 			}
 			if ep.DBName == "" {
-				ep.DBName = "postgres"
+				// MySQL has no default database: the primary's dbname is
+				// required (validated below) and the replica inherits it.
+				if db.Type == "mysql" {
+					ep.DBName = db.Primary.DBName
+				} else {
+					ep.DBName = "postgres"
+				}
 			}
 		}
 		if db.Limits.MaxRows == 0 {
@@ -345,6 +354,10 @@ func (c *Config) applyDefaults() {
 		}
 		if len(db.SearchPath) == 0 {
 			db.SearchPath = []string{"public"}
+			if db.Type == "mysql" {
+				// Unqualified names resolve against the default database.
+				db.SearchPath = []string{db.Primary.DBName}
+			}
 		}
 	}
 	if len(c.Policies) == 0 {
@@ -404,8 +417,17 @@ func (c *Config) validate() error {
 			add("%s.name: duplicate %q", p, db.Name)
 		}
 		dbNames[db.Name] = true
-		if db.Type != "postgres" {
-			add("%s.type: unsupported %q (supported: postgres)", p, db.Type)
+		switch db.Type {
+		case "postgres":
+		case "mysql":
+			if db.Primary.DBName == "" {
+				add("%s.primary.dbname: required for mysql", p)
+			}
+			if len(db.SearchPath) != 1 || db.SearchPath[0] != db.Primary.DBName {
+				add("%s.search_path: for mysql, omit it or set it to [%s] (the default database)", p, db.Primary.DBName)
+			}
+		default:
+			add("%s.type: unsupported %q (supported: postgres, mysql)", p, db.Type)
 		}
 		for _, ep := range []struct {
 			name string
@@ -428,10 +450,21 @@ func (c *Config) validate() error {
 			default:
 				add("%s.auth: must be password or aws_iam", pp)
 			}
-			switch ep.e.SSLMode {
-			case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+			switch {
+			case db.Type == "mysql":
+				// Mapped to go-sql-driver TLS settings: disable (no TLS),
+				// require (TLS without verification), verify-full.
+				switch ep.e.SSLMode {
+				case "disable", "require", "verify-full":
+				default:
+					add("%s.sslmode: %q is not supported for mysql (use disable, require or verify-full)", pp, ep.e.SSLMode)
+				}
 			default:
-				add("%s.sslmode: invalid %q", pp, ep.e.SSLMode)
+				switch ep.e.SSLMode {
+				case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+				default:
+					add("%s.sslmode: invalid %q", pp, ep.e.SSLMode)
+				}
 			}
 			if ep.e.SSLMode != "verify-full" && !isLoopbackHost(ep.e.Host) && db.Labels["env"] == "prod" {
 				c.warn("%s.sslmode: %q on a prod database; verify-full is strongly recommended", pp, ep.e.SSLMode)
