@@ -20,6 +20,10 @@ provider "aws" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -96,4 +100,7 @@ resource "aws_db_instance" "this" {
   deletion_protection     = false
   apply_immediately       = true
   backup_retention_period = 0
+
+  # dbgateway's aws_iam auth: logins with RDS authentication tokens.
+  iam_database_authentication_enabled = var.iam_auth
 }
