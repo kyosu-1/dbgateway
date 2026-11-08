@@ -1,14 +1,14 @@
 # dbgateway
 
-AIエージェントが本番DBに触るときに必ず通す「SQLを理解する関所」です。MCPサーバーとして動き、受け取ったSQLを PostgreSQL 本体のパーサで解析して、**自動で通す・拒否する**（フェーズ2で**人の承認待ち**も）に振り分けます。人もAIも、同じ解析・ポリシー・マスキング・監査ログを通ります。
+AIエージェントが本番DBに触るときに必ず通す「SQLを理解する関所」です。MCPサーバーとして動き、受け取ったSQLを本物のDBパーサ（PostgreSQL は pg_query、MySQL は TiDB parser）で解析して、**自動で通す・人の承認を待つ・拒否する**に振り分けます。人もAIも、同じ解析・ポリシー・マスキング・監査ログを通ります。
 
-- 設計: [docs/dbgateway-design.md](docs/dbgateway-design.md)
+- 設計: [docs/dbgateway-design.md](docs/dbgateway-design.md)、[フェーズ2〜4 詳細設計](docs/design-phase2-4.md)
 - ライセンス: [Apache-2.0](LICENSE)（ガバナンス機能を有償版に分けません）
 - 脆弱性の報告: [SECURITY.md](SECURITY.md)
 
-> **状態: フェーズ1（読み取りMVP）。** 書き込みは常に拒否し、「承認機能がまだ有効ではない」と理由を返します。承認、Slack、パスキー、緊急昇格はフェーズ2以降です。
+> **状態: フェーズ1〜4を実装済み。** 読み取りの関所（フェーズ1）に加え、承認つきの書き込み・Slack通知（フェーズ2）、人のクエリ・IAM認証・冗長構成（フェーズ3）、PostgreSQLプロトコル互換のプロキシ・MySQL・SCIM・個人情報の検出（フェーズ4）があります。
 
-## できること（フェーズ1）
+## できること
 
 | 機能 | 内容 |
 | --- | --- |
@@ -20,6 +20,12 @@ AIエージェントが本番DBに触るときに必ず通す「SQLを理解す�
 | 認証 | OAuth 2.1 の認可サーバー（PKCE必須、Client ID Metadata Documents優先、動的登録も可）、上流はOIDC。CLIはデバイスフロー。エージェントは人の代理の短命トークンで、権限は人以下 |
 | 監査ログ | 拒否を含む全リクエストをJSON Linesで記録。ハッシュチェーン、保存期間、`dbgw audit verify`。書けなければ結果を返さない |
 | 導入の補助 | 観察モード（`server.mode: shadow`）、`dbgw config validate`、`dbgw policy test` |
+| 承認（フェーズ2） | 書き込みは承認待ちで返し（`status: pending`）、人がWeb画面でステップアップ認証（パスキーかIdPの再認証）をして承認。リスクレベルと承認ルール（CEL、複数段階）、申請者本人と同じ人の重複承認の禁止、SQLのハッシュ固定と実行直前の再評価、影響行数の上限超過でロールバック。MCPツール `get_request`、`explain_policy` |
+| 通知（フェーズ2） | Slack（Socket Mode。却下ボタン、承認画面へのリンク、スレッドで経緯を集約、アカウントの紐づけ）と汎用Webhook（HMAC署名）。異常検知（拒否の多発、大量取得）、設定変更の通知 |
+| 本人確認（フェーズ2） | パスキー（WebAuthn）によるログインとステップアップ。IdPのない環境は登録リンク（`dbgw passkey enroll`）から |
+| 人の利用（フェーズ3） | Web簡易コンソール、承認・リクエスト・監査ログ・ユーザーの画面（日本語・英語）、`dbgw query` などのCLI（connectRPC の `GatewayService`）、緊急昇格、期限付きロール（JIT）と unmask |
+| 運用（フェーズ3） | RDS / Cloud SQL の IAM データベース認証、レプリカへの振り分け、OpenTelemetry（OTLP）への監査ログ転送、管理用DBと監査ログの PostgreSQL 対応（複数台構成） |
+| 拡張（フェーズ4） | PostgreSQL プロトコル互換のプロキシ（psql / DBeaver）、MySQL アダプタ、SCIM 2.0、値の中身による個人情報の検出 |
 
 ## クイックスタート（ローカル）
 
@@ -74,6 +80,11 @@ dbgw policy test testdata/policy/*.yaml
 ```
 
 例: [testdata/policy/example_test.yaml](testdata/policy/example_test.yaml)
+
+### ドキュメント
+
+- [CLI](docs/cli.md)、[PostgreSQL プロキシ](docs/pgproxy.md)、[MySQL](docs/mysql.md)、[通知](docs/notifications.md)、[SCIM と個人情報の検出](docs/scim.md)
+- [運用（IAM認証、OTLP、緊急迂回経路）](docs/operations.md)、[冗長構成](docs/ha.md)
 
 ### 監査ログの検証
 
