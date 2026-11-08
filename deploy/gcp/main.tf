@@ -99,6 +99,9 @@ resource "google_sql_database_instance" "this" {
 resource "google_sql_database" "app" {
   name     = "app"
   instance = google_sql_database_instance.this.name
+  # Deleted together with the instance; dropping it first would fail
+  # because the sample schema's objects depend on it.
+  deletion_policy = "ABANDON"
 }
 
 # Built-in administrator, used only by setup.sh to load the sample schema
@@ -107,6 +110,8 @@ resource "google_sql_user" "admin" {
   name     = "dbgw_admin"
   instance = google_sql_database_instance.this.name
   password = random_password.admin.result
+  # It owns the sample schema; it is removed with the instance.
+  deletion_policy = "ABANDON"
 }
 
 # IAM database user for dbgateway's gcp_iam auth.
@@ -114,6 +119,8 @@ resource "google_sql_user" "iam" {
   name     = local.iam_db_user
   instance = google_sql_database_instance.this.name
   type     = local.iam_is_service_account ? "CLOUD_IAM_SERVICE_ACCOUNT" : "CLOUD_IAM_USER"
+  # It holds grants in the database; it is removed with the instance.
+  deletion_policy = "ABANDON"
 }
 
 # roles/cloudsql.instanceUser is required for IAM database logins;
