@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). Before 1.0, minor versions may contain breaking changes.
+
+## [Unreleased]
+
+First public release.
+
+### Added
+
+- MCP server (Streamable HTTP) with `list_databases`, `search_objects`, `execute_sql`, `get_request` and `explain_policy`; stdio relay `dbgw mcp stdio`.
+- SQL analysis with the PostgreSQL parser (pg_query) and the TiDB parser for MySQL; refusal of anything that cannot be fully analyzed.
+- Roles, groups, data classes and CEL policies with default deny, shadow mode and `dbgw policy test`.
+- Column masking by lineage, `no_ai` columns and value-based PII detection.
+- Approval workflow for writes: risk levels, multi-step approval rules, passkey or IdP step-up, statement pinning, re-evaluation and affected-row limits; time-limited roles, unmask and break-glass elevation.
+- Web UI (English and Japanese): approvals, requests, SQL editor with completion, history, saved queries and audited export, audit log, users.
+- OAuth 2.1 authorization server for agents, OIDC and passkey sign-in, CLI device flow, SCIM 2.0.
+- Hash-chained audit log (files, PostgreSQL, OpenTelemetry) with `dbgw audit verify`.
+- Slack and webhook notifications, anomaly alerts.
+- IAM database authentication for Amazon RDS and Cloud SQL, read replicas, multi-instance mode with PostgreSQL.
+- Terraform examples for ECS Fargate and Cloud Run.

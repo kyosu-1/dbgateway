@@ -37,6 +37,32 @@ jobs:
           bin/dbgw config validate --config examples/dev/dbgateway.yaml
           bin/dbgw policy test testdata/policy/*.yaml
 
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  docs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci --no-fund --no-audit
+      - name: Build the documentation site (fails on dead links)
+        run: npm run build
+
   editor:
     # The SQL editor bundle (internal/web/ui/static/editor.js) is committed
     # so that building dbgateway needs only Go; check it matches its source.

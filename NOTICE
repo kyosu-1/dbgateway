@@ -1,0 +1,13 @@
+dbgateway
+Copyright the dbgateway authors.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The dbgw binary embeds third-party software:
+
+- The web SQL editor bundle (internal/web/ui/static/editor.js) includes
+  CodeMirror 6 and Lezer (MIT License). Their license texts are in
+  web/editor/THIRD_PARTY_LICENSES.
+- Go module dependencies are listed in go.mod, each under its own license.
+- The PostgreSQL parser (pg_query_go / libpg_query) includes PostgreSQL source
+  code under the PostgreSQL License.

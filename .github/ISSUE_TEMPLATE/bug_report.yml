@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues** (for example a statement that bypasses the checks, or masked data reaching a client) must not be reported here. See SECURITY.md.
+        Do not paste real data, credentials or internal hostnames.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: A minimal configuration excerpt and SQL statement, if relevant.
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `dbgw --version`, or the commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options: [PostgreSQL, MySQL, Not database-related]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log lines, with sensitive values removed.
+      render: text
