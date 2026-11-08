@@ -1,0 +1,101 @@
+# dbgateway configuration for the ECS test environment (deploy/aws-ecs).
+# Rendered by Terraform and passed to the tasks in DBGW_CONFIG_YAML.
+# No secrets: the management database DSN is in DBGW_STORE_DSN (Secrets
+# Manager), the RDS CA certificates are in DBGW_DB_CA, and the target
+# database uses IAM authentication with the task role.
+
+server:
+  listen: 0.0.0.0:8443          # plain HTTP behind the ALB, which terminates TLS
+  public_url: ${public_url}
+  mode: enforce
+
+auth:
+  passkeys: true                # no IdP: sign in with passkeys (dbgw passkey enroll)
+  agent_tokens: { max_ttl: 1h, refresh: true }
+
+store:
+  driver: postgres              # shared by every task
+  dsn_env: DBGW_STORE_DSN
+  sslrootcert_env: DBGW_DB_CA
+
+audit:
+  output: postgres
+  retention: 7d
+
+approvals:
+  enabled: true
+  step_up_max_age: 10m
+
+databases:
+  - name: ${db_name}
+    labels: { env: prod }       # behave like production (agents see unclassified columns masked)
+    primary:
+      host: ${rds_host}
+      dbname: ${target_db}
+      auth: aws_iam
+      region: ${region}
+      read_user: ${read_user}
+      write_user: ${write_user}
+      sslmode: verify-full
+      sslrootcert_env: DBGW_DB_CA
+    limits:
+      max_rows: 100
+      statement_timeout: 5s
+
+groups:
+  - name: developers
+    members: [${jsonencode(requester_email)}]
+  - name: approvers
+    members: [${jsonencode(approver_email)}]
+
+role_bindings:
+  - group: developers
+    databases: "*"
+    roles: [querier, writer]
+  - group: approvers
+    databases: "*"
+    roles: [querier, writer, approver]
+
+approval_rules:
+  - name: default
+    when: "true"
+    steps:
+      - { role: approver }
+    expire_after: 30m
+
+data_classes:
+  - columns: ["public.users.email", "public.users.phone"]
+    class: masked
+    semantic_type: contact
+  - column_pattern: ".*(password|token|secret).*"
+    class: masked
+    semantic_type: secret
+  - columns: ["public.support_tickets.body"]
+    class: no_ai
+  - column_pattern: "public\\.[a-z_]+\\.(id|[a-z_]+_id|created_at|updated_at|status|plan|amount|name|reason|subject|churned_at)"
+    class: public
+
+semantic_types:
+  contact: { method: partial }
+  secret: { method: redact }
+
+policies:
+  - name: deny-ddl
+    when: stmt.kind == "ddl"
+    action: deny
+  - name: deny-unbounded-writes
+    when: stmt.is_write && !stmt.has_where
+    action: deny
+    hint: "WHEREがありません。対象を絞って再実行してください。"
+  - name: agents-never-see-no-ai
+    when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
+    action: deny
+    message: "AIに送らない区分（no_ai）の列を参照しています。"
+    hint: "この列を除いて再実行してください。"
+  - name: reads
+    when: stmt.kind == "select" && !stmt.is_write
+    action: allow
+  - name: writes
+    when: stmt.is_write
+    action: approve
+    require: { reason: true }
