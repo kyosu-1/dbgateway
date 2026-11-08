@@ -28,6 +28,7 @@ type fakeIdP struct {
 	nonces        map[string]string // code -> nonce
 	challenges    map[string]string // code -> PKCE challenge
 	sawPKCEVerify bool
+	lastAuthorize url.Values // query of the last authorization request
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -55,6 +56,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			http.Error(w, "pkce required", 400)
 			return
 		}
+		f.lastAuthorize = q
 		code := randomToken(8)
 		f.nonces[code] = q.Get("nonce")
 		f.challenges[code] = q.Get("code_challenge")
