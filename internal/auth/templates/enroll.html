@@ -1,0 +1,22 @@
+{{define "content"}}
+<main class="card card-narrow">
+<div class="stack-14">
+<span class="client-icon">{{template "icon-key"}}</span>
+<h1>{{t "enroll.heading"}}</h1>
+<p class="small muted">{{t "enroll.lead" .Email}}</p>
+</div>
+<ul class="info">
+<li>{{template "icon-shield"}}<span>{{t "enroll.info_device"}}</span></li>
+<li>{{template "icon-clock"}}<span>{{t "enroll.info_expires" (fmtTime .ExpiresAt)}}</span></li>
+</ul>
+<div class="webauthn stack-12" hidden>
+<div class="field">
+<label for="passkey-name">{{t "account.passkey_name"}} <span class="label-note">{{t "enroll.optional"}}</span></label>
+<input id="passkey-name" type="text" maxlength="64" autocomplete="off" placeholder="{{t "account.passkey_name_placeholder"}}">
+</div>
+<button type="button" class="btn btn-primary btn-block" data-webauthn="create" data-begin="/passkeys/enroll/begin" data-finish="/passkeys/enroll/finish" data-csrf="{{.CSRF}}" data-name="passkey-name" data-status="enroll-status" data-msg-working="{{t "passkey.working"}}" data-msg-error="{{t "passkey.error_failed"}}" data-msg-unsupported="{{t "passkey.unsupported"}}">{{template "icon-key"}}{{t "enroll.submit"}}</button>
+</div>
+<p id="enroll-status" class="webauthn-status" role="status" aria-live="polite"></p>
+<noscript><p class="hint">{{t "passkey.noscript"}}</p></noscript>
+</main>
+{{end}}

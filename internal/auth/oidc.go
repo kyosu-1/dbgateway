@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -66,8 +67,9 @@ func (o *oidcLogin) setup(ctx context.Context) (*oidc.Provider, *oauth2.Config, 
 	}, nil
 }
 
-// startOIDCLogin redirects to the IdP's authorization endpoint.
-func (s *Server) startOIDCLogin(w http.ResponseWriter, r *http.Request, ls *loginState, forcePrompt bool) {
+// startOIDCLogin redirects to the IdP's authorization endpoint. A step-up
+// additionally asks the IdP to authenticate again (max_age=0).
+func (s *Server) startOIDCLogin(w http.ResponseWriter, r *http.Request, ls *loginState, forcePrompt, stepUp bool) {
 	_, oc, err := s.oidc.setup(r.Context())
 	if err != nil {
 		s.serverError(w, r, err)
@@ -77,8 +79,11 @@ func (s *Server) startOIDCLogin(w http.ResponseWriter, r *http.Request, ls *logi
 		oidc.Nonce(derive("nonce", ls.secret)),
 		oauth2.S256ChallengeOption(derive("pkce", ls.secret)),
 	}
-	if forcePrompt {
+	if forcePrompt || stepUp {
 		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	if stepUp {
+		opts = append(opts, oauth2.SetAuthURLParam("max_age", "0"))
 	}
 	http.Redirect(w, r, oc.AuthCodeURL(derive("state", ls.secret), opts...), http.StatusFound)
 }
@@ -100,52 +105,67 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusForbidden, "error.idp_failed")
 		return
 	}
-	email, groups, err := s.oidcIdentity(r.Context(), q.Get("code"), ls)
+	id, err := s.oidcIdentity(r.Context(), q.Get("code"), ls)
 	if err != nil {
 		s.log.Warn("auth: OIDC login rejected", "err", err)
 		s.errorPage(w, r, http.StatusForbidden, "error.login_rejected")
 		return
 	}
-	s.completeLogin(w, r, ls, email, groups)
+	if ls.stepUp {
+		s.completeIdPStepUp(w, r, ls, id.email, id.authTime)
+		return
+	}
+	s.completeLogin(w, r, ls, id.email, id.groups)
+}
+
+// oidcResult is the identity asserted by a verified ID token.
+type oidcResult struct {
+	email    string
+	groups   []string
+	authTime time.Time // zero if the token has no auth_time claim
 }
 
 // oidcIdentity exchanges the code and validates the ID token.
-func (s *Server) oidcIdentity(ctx context.Context, code string, ls *loginState) (string, []string, error) {
+func (s *Server) oidcIdentity(ctx context.Context, code string, ls *loginState) (*oidcResult, error) {
 	if code == "" {
-		return "", nil, errors.New("missing code")
+		return nil, errors.New("missing code")
 	}
 	provider, oc, err := s.oidc.setup(ctx)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	tok, err := oc.Exchange(ctx, code, oauth2.VerifierOption(derive("pkce", ls.secret)))
 	if err != nil {
-		return "", nil, fmt.Errorf("code exchange: %w", err)
+		return nil, fmt.Errorf("code exchange: %w", err)
 	}
 	rawID, ok := tok.Extra("id_token").(string)
 	if !ok || rawID == "" {
-		return "", nil, errors.New("no id_token in token response")
+		return nil, errors.New("no id_token in token response")
 	}
 	idt, err := provider.Verifier(&oidc.Config{ClientID: oc.ClientID}).Verify(ctx, rawID)
 	if err != nil {
-		return "", nil, fmt.Errorf("verify id_token: %w", err)
+		return nil, fmt.Errorf("verify id_token: %w", err)
 	}
 	if !secureEqual(idt.Nonce, derive("nonce", ls.secret)) {
-		return "", nil, errors.New("nonce mismatch")
+		return nil, errors.New("nonce mismatch")
 	}
 	var claims map[string]any
 	if err := idt.Claims(&claims); err != nil {
-		return "", nil, fmt.Errorf("decode claims: %w", err)
+		return nil, fmt.Errorf("decode claims: %w", err)
 	}
 	emailClaim, _ := claims["email"].(string)
 	email, ok := normalizeEmail(emailClaim)
 	if !ok {
-		return "", nil, errors.New("id_token has no valid email claim")
+		return nil, errors.New("id_token has no valid email claim")
 	}
 	if v, present := claims["email_verified"]; present {
 		if b, isBool := v.(bool); !isBool || !b {
-			return "", nil, errors.New("email is not verified")
+			return nil, errors.New("email is not verified")
 		}
+	}
+	res := &oidcResult{email: email}
+	if at, ok := claims["auth_time"].(float64); ok && at > 0 {
+		res.authTime = time.Unix(int64(at), 0)
 	}
 	groups, found := stringList(claims[s.oidc.cfg.GroupsClaim])
 	if !found {
@@ -157,7 +177,8 @@ func (s *Server) oidcIdentity(ctx context.Context, code string, ls *loginState) 
 			}
 		}
 	}
-	return email, groups, nil
+	res.groups = groups
+	return res, nil
 }
 
 // stringList converts a JSON claim (array of strings, or a single string)

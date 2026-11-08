@@ -30,6 +30,10 @@ const CookieName = "lang"
 // QueryParam is the query parameter that switches the language.
 const QueryParam = "lang"
 
+// Auto, as the value of QueryParam, clears the chosen language so that the
+// browser's Accept-Language is used again.
+const Auto = "auto"
+
 //go:embed messages/*.json
 var messagesFS embed.FS
 
@@ -129,8 +133,9 @@ func (c *Catalog) SwitchLanguage(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	q := r.URL.Query()
-	if lang := q.Get(QueryParam); c.Supported(lang) {
-		http.SetCookie(w, &http.Cookie{
+	lang := q.Get(QueryParam)
+	if c.Supported(lang) || lang == Auto {
+		ck := &http.Cookie{
 			Name:     CookieName,
 			Value:    lang,
 			Path:     "/",
@@ -138,7 +143,11 @@ func (c *Catalog) SwitchLanguage(w http.ResponseWriter, r *http.Request) bool {
 			HttpOnly: true,
 			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 			SameSite: http.SameSiteLaxMode,
-		})
+		}
+		if lang == Auto { // follow the browser again
+			ck.Value, ck.MaxAge = "", -1
+		}
+		http.SetCookie(w, ck)
 	}
 	q.Del(QueryParam)
 	u := url.URL{Path: r.URL.Path, RawQuery: q.Encode()}

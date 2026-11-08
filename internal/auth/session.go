@@ -16,7 +16,13 @@ import (
 type session struct {
 	email string
 	raw   string // raw session ID; used to derive the CSRF token
+	// stepUpMethod and stepUpAt record the last re-authentication.
+	stepUpMethod string
+	stepUpAt     time.Time
 }
+
+// hash is the stored session key.
+func (s *session) hash() string { return store.HashSecret(s.raw) }
 
 // csrf returns the CSRF token bound to this session.
 func (s *session) csrf() string { return derive("csrf", s.raw) }
@@ -45,12 +51,22 @@ func (s *Server) currentSession(r *http.Request) (*session, error) {
 		_ = s.store.DeleteSession(r.Context(), hash)
 		return nil, nil
 	}
-	return &session{email: sess.Email, raw: c.Value}, nil
+	out := &session{email: sess.Email, raw: c.Value, stepUpMethod: sess.StepUpMethod}
+	if sess.StepUpAt != nil {
+		out.stepUpAt = *sess.StepUpAt
+	}
+	return out, nil
 }
 
 // startSession creates a new session for email (replacing any existing
 // one, to prevent session fixation) and sets the session cookie.
 func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, email string) error {
+	_, err := s.startSessionRaw(ctx, w, r, email)
+	return err
+}
+
+// startSessionRaw is startSession returning the raw session ID.
+func (s *Server) startSessionRaw(ctx context.Context, w http.ResponseWriter, r *http.Request, email string) (string, error) {
 	if old, err := r.Cookie(sessionCookieName); err == nil && old.Value != "" {
 		_ = s.store.DeleteSession(ctx, store.HashSecret(old.Value))
 	}
@@ -63,10 +79,10 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
 	}); err != nil {
-		return fmt.Errorf("auth: create session: %w", err)
+		return "", fmt.Errorf("auth: create session: %w", err)
 	}
 	s.setCookie(w, sessionCookieName, raw, ttl)
-	return nil
+	return raw, nil
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
