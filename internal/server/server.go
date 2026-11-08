@@ -24,6 +24,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/gateway"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
+	"github.com/kyosu-1/dbgateway/internal/pgproxy"
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/store"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	handler http.Handler
 	closers []func()
 	auth    *auth.Server
+	pgproxy *pgproxy.Server // nil when disabled
 }
 
 // New builds the server from a validated configuration.
@@ -79,6 +81,13 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	s.auth = authSrv
+
+	if cfg.PGProxy.Enabled() {
+		s.pgproxy, err = pgproxy.New(pgproxy.Options{Config: cfg, Gateway: gw, Authenticate: authSrv.Authenticate, Logger: logger})
+		if err != nil {
+			return nil, fmt.Errorf("pgproxy: %w", err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	authSrv.Register(mux)
@@ -159,7 +168,16 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go s.auth.RunCleanup(ctx, 10*time.Minute) // expired sessions, codes and tokens
 
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
+	if s.pgproxy != nil {
+		go func() {
+			s.logger.Info("pgproxy listening", "addr", s.cfg.PGProxy.Listen)
+			if err := s.pgproxy.ListenAndServe(ctx); err != nil && ctx.Err() == nil {
+				errc <- fmt.Errorf("pgproxy: %w", err)
+			}
+		}()
+	}
+
 	go func() {
 		s.logger.Info("dbgateway listening", "addr", s.cfg.Server.Listen, "public_url", s.cfg.Server.PublicURL,
 			"mode", s.cfg.Server.Mode, "config_version", s.cfg.Version)

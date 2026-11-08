@@ -131,6 +131,13 @@ var defaultFunctions = []string{
 	"pg_typeof", "num_nonnulls", "num_nulls", "gen_random_uuid", "uuidv4", "uuidv7", "uuid_extract_timestamp",
 	"uuid_extract_version", "format_type", "pg_collation_for", "col_description", "obj_description",
 	"pg_size_pretty", "pg_size_bytes", "version",
+	// Read-only catalog helpers used by psql's \d commands and GUI clients.
+	"current_schema", "current_schemas", "current_database", "pg_get_userbyid", "pg_table_is_visible",
+	"pg_type_is_visible", "pg_function_is_visible", "pg_get_expr", "pg_get_constraintdef", "pg_get_indexdef",
+	"pg_get_viewdef", "pg_get_triggerdef", "pg_get_ruledef", "pg_get_partkeydef", "pg_get_statisticsobjdef_columns",
+	"pg_encoding_to_char", "pg_relation_is_publishable", "array_to_string", "pg_get_function_arguments",
+	"pg_get_function_result", "pg_get_function_identity_arguments", "pg_relation_size", "pg_total_relation_size",
+	"pg_table_size", "pg_indexes_size", "format_type",
 	"bool", "int2", "int4", "int8", "float4", "float8", "numeric", "text", "varchar", "date", "time",
 	"timestamp", "timestamptz", "interval", "uuid", "inet", "cidr", "json", "jsonb",
 }
