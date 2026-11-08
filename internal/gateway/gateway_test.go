@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/audit"
@@ -222,5 +223,69 @@ func TestPIIDetectionForAgents(t *testing.T) {
 	r = run(gw, agent, "prod", "SELECT id, name FROM users WHERE id = 1")
 	if r.Status != gateway.StatusDenied || r.Rule != "builtin:pii-detected" || len(r.Rows) != 0 {
 		t.Fatalf("deny action must refuse the result: %+v", r)
+	}
+}
+
+// countingSink records audit lines in memory.
+type countingSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *countingSink) LastHash() (string, error) { return audit.GenesisHash, nil }
+func (c *countingSink) Close() error              { return nil }
+func (c *countingSink) Append(line []byte, _ time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, string(line))
+	return nil
+}
+func (c *countingSink) count(sub string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, l := range c.lines {
+		if strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// A schema listing shown as part of a page (Browse) is not audited; an
+// explicit search is, and so is a denied browse.
+func TestSearchObjectsBrowseIsNotAudited(t *testing.T) {
+	cfg, err := config.Parse([]byte(unitYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &countingSink{}
+	al, _ := audit.New(sink)
+	gw, err := gateway.New(gateway.Options{Config: cfg, Adapters: map[string]analysis.Adapter{"postgres": gatewaytest.New()}, Audit: al})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Close()
+	ctx := context.Background()
+
+	resp, err := gw.SearchObjects(ctx, taro, gateway.SearchRequest{Database: "prod", Browse: true, Detail: "full"})
+	if err != nil || len(resp.Objects) == 0 {
+		t.Fatalf("browse: %v %+v", err, resp)
+	}
+	if n := sink.count(`"event":"search"`); n != 0 {
+		t.Fatalf("browse wrote %d audit entries", n)
+	}
+	if _, err := gw.SearchObjects(ctx, taro, gateway.SearchRequest{Database: "prod", Keyword: "users"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := sink.count(`"event":"search"`); n != 1 {
+		t.Fatalf("explicit search: %d audit entries, want 1", n)
+	}
+	outsider := &identity.Principal{Kind: identity.KindHuman, Human: "eve@example.com"}
+	if _, err := gw.SearchObjects(ctx, outsider, gateway.SearchRequest{Database: "prod", Browse: true}); err == nil {
+		t.Fatal("outsider must be denied")
+	}
+	if n := sink.count(`"decision":"deny"`); n != 1 {
+		t.Fatalf("denied browse: %d deny entries, want 1", n)
 	}
 }

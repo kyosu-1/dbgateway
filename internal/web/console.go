@@ -66,10 +66,12 @@ func (a *App) renderConsole(w http.ResponseWriter, r *http.Request, v *viewer, s
 		"MaxRows": db.MaxRows, "Timeout": a.cfg.Database(db.Name).Limits.StatementTimeout.D(),
 		"CanWrite": db.CanWrite, "IsAuditor": a.isAuditor(v.p),
 	}
-	// Schema browser (catalog only; audited as "search").
+	// Schema browser (catalog only). The plain table list is part of the
+	// page and is not audited; a search typed into the box is.
 	if db.CanSearch {
-		sr, err := a.gw.SearchObjects(r.Context(), v.p, gateway.SearchRequest{Database: db.Name, Keyword: strings.TrimSpace(f.Search),
-			Detail: "summary", Limit: 100})
+		keyword := strings.TrimSpace(f.Search)
+		sr, err := a.gw.SearchObjects(r.Context(), v.p, gateway.SearchRequest{Database: db.Name, Keyword: keyword,
+			Detail: "summary", Limit: 100, Browse: keyword == ""})
 		if err != nil {
 			data["SchemaError"] = true
 		} else {

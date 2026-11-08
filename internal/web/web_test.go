@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"github.com/kyosu-1/dbgateway/internal/audit"
 	"net/http"
 	"net/url"
 	"strings"
@@ -473,5 +474,33 @@ func TestPasskeyCmd(t *testing.T) {
 	cmd.SetArgs([]string{"enroll", "--config", cfgPath, "--email", "taro@example.com"})
 	if err := cmd.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "auth.passkeys") {
 		t.Fatalf("without auth.passkeys: %v", err)
+	}
+}
+
+// Opening the console lists the schema without writing an audit entry;
+// a search typed into the box is audited.
+func TestConsoleSchemaListIsNotAudited(t *testing.T) {
+	e := newEnv(t, nil)
+	c, _ := e.login("taro@example.com")
+	searches := func() int {
+		page, err := audit.Search(e.cfg.Audit.Dir, audit.Filter{Event: "search", Limit: audit.MaxSearchLimit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(page.Entries)
+	}
+	for range 3 {
+		if resp, page := do(t, c, "GET", e.url("/console?db=prod"), nil); resp.StatusCode != http.StatusOK || !strings.Contains(page, "users") {
+			t.Fatalf("console: %d", resp.StatusCode)
+		}
+	}
+	if n := searches(); n != 0 {
+		t.Fatalf("opening the console wrote %d search entries", n)
+	}
+	if resp, _ := do(t, c, "GET", e.url("/console?db=prod&q=users"), nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("console search: %d", resp.StatusCode)
+	}
+	if n := searches(); n != 1 {
+		t.Fatalf("a typed search wrote %d entries, want 1", n)
 	}
 }

@@ -199,6 +199,12 @@ type SearchRequest struct {
 	Detail   string // names | summary | full
 	Limit    int
 	TraceID  string
+	// Browse marks a schema listing that a screen shows as part of its
+	// layout (e.g. the SQL console's table list) rather than a search the
+	// caller asked for. Allowed listings are then not audited, so the audit
+	// log is not flooded with page views; denials are still audited, and
+	// browsing never reaches the database (catalog only, no "full" detail).
+	Browse bool
 }
 
 // SearchResponse lists matching objects; sensitive columns are marked.
@@ -227,6 +233,9 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 	}
 	if req.Detail == "" {
 		req.Detail = "summary"
+	}
+	if req.Browse && req.Detail == "full" {
+		req.Detail = "summary" // browsing reads the cached catalog only
 	}
 	filter := analysis.ObjectFilter{Keyword: req.Keyword, Schema: req.Schema, Detail: req.Detail, Limit: req.Limit + 1}
 	var objs []analysis.Object
@@ -265,6 +274,9 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 	}
 	if resp.Objects == nil {
 		resp.Objects = []analysis.Object{}
+	}
+	if req.Browse {
+		return resp, nil
 	}
 	if err := g.writeAudit(&audit.Entry{RequestID: rid, TraceID: req.TraceID, Event: "search", Principal: principalInfo(p),
 		Database: d.cfg.Name, Decision: config.ActionAllow, Extra: map[string]any{"keyword": req.Keyword, "objects": len(resp.Objects)}}); err != nil {
