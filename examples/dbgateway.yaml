@@ -41,6 +41,8 @@ databases:
       auth: password            # aws_iam is planned (phase 3)
       read_user: dbgw_reader    # GRANT SELECT only
       password_env: DBGW_PROD_MAIN_READER_PASSWORD
+      write_user: dbgw_writer   # GRANT SELECT, INSERT, UPDATE, DELETE (no DDL); runs approved writes only
+      write_password_env: DBGW_PROD_MAIN_WRITER_PASSWORD
       sslmode: verify-full
     replica:
       host: prod-main-ro.example.internal
@@ -61,6 +63,8 @@ databases:
       dbname: app
       read_user: dbgw_reader
       password_env: DBGW_STAGING_READER_PASSWORD
+      write_user: dbgw_writer
+      write_password_env: DBGW_STAGING_WRITER_PASSWORD
 
 groups:
   - { name: data-team, oidc_group: data-team }
@@ -70,10 +74,55 @@ groups:
 role_bindings:
   - group: data-team
     databases: { labels: { env: prod } }
-    roles: [querier]
+    roles: [querier, writer]    # writer = may request writes; they run only after approval
   - group: sre
     databases: "*"
+    roles: [querier, writer, approver]
+  - user: jiro@example.com      # a temporary, personal grant (JIT)
+    databases: [staging]
     roles: [querier]
+    expires_at: 2026-12-31T00:00:00Z
+
+approvals:
+  enabled: true                 # false (default): every write is denied
+  default_max_affected_ratio: 2.0   # affected-rows limit = estimate x ratio (at least 1); rollback when exceeded
+  step_up_max_age: 5m           # approvers must have re-authenticated (passkey / IdP) this recently
+
+risk:                           # high → medium; no match = low. Writes are always estimated (EXPLAIN).
+  high:
+    - stmt.is_write && estimate.rows > 1000
+    - stmt.is_write && columns.exists(c, c.class != "public")
+    - stmt.is_write && principal.kind == "agent" && database.labels.env == "prod"
+  medium:
+    - stmt.is_write
+
+approval_rules:                 # top to bottom, first match wins; approve without a matching rule = deny
+  - name: prod-high-risk
+    when: database.labels.env == "prod" && risk == "high"
+    steps:
+      - { role: approver, count: 1 }   # someone with the approver role on the database
+      - { group: dba, count: 1 }       # then a DBA (never the same person, never the requester)
+    expire_after: 2h
+  - name: prod-default
+    when: database.labels.env == "prod"
+    steps:
+      - { role: approver, count: 1 }
+    expire_after: 30m
+  - name: non-prod
+    when: "true"
+    steps:
+      - { role: approver, count: 1 }
+    expire_after: 1h
+    max_affected_rows: 10000    # overrides the estimate-based limit
+
+unmask:                         # humans only; never applies to agents
+  - user: hanako@example.com
+    databases: [prod-main]
+    expires_at: 2026-11-30T00:00:00Z
+
+break_glass:                    # approvers may elevate (web UI, reason + step-up) to write without approval
+  max_duration: 1h
+  databases: { labels: { env: prod } }
 
 default_class:                  # columns without a data class
   human: public

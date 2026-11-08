@@ -1,7 +1,8 @@
 # Local development configuration. Start PostgreSQL with
 #   docker compose -f examples/dev/compose.yaml up -d
 # then
-#   DBGW_DEV_READER_PASSWORD=reader go run ./cmd/dbgw serve --config examples/dev/dbgateway.yaml
+#   DBGW_DEV_READER_PASSWORD=reader DBGW_DEV_WRITER_PASSWORD=writer \
+#     go run ./cmd/dbgw serve --config examples/dev/dbgateway.yaml
 #
 # dev_login accepts any e-mail without a password: never use it outside
 # your machine (it is refused unless listening on loopback).
@@ -32,6 +33,8 @@ databases:
       dbname: app
       read_user: dbgw_reader
       password_env: DBGW_DEV_READER_PASSWORD
+      write_user: dbgw_writer   # examples/dev/initdb/02-writer.sql
+      write_password_env: DBGW_DEV_WRITER_PASSWORD
       sslmode: disable
     limits:
       max_rows: 100
@@ -41,11 +44,46 @@ databases:
 groups:
   - name: developers
     members: [dev@example.com, taro@example.com]
+  - name: approvers
+    members: [hanako@example.com]
 
 role_bindings:
   - group: developers
     databases: "*"
-    roles: [querier]
+    roles: [querier, writer]
+  - group: approvers
+    databases: "*"
+    roles: [querier, writer, approver]
+
+# Writes are submitted for approval: log in as taro@example.com, let an
+# agent run an UPDATE, then approve it as hanako@example.com.
+approvals:
+  enabled: true
+  step_up_max_age: 5m
+
+risk:
+  high:
+    - stmt.is_write && estimate.rows > 100
+    - stmt.is_write && columns.exists(c, c.class != "public")
+  medium:
+    - stmt.is_write
+
+approval_rules:
+  - name: high-risk
+    when: risk == "high"
+    steps:
+      - { role: approver, count: 1 }
+    expire_after: 30m
+    max_affected_rows: 1000
+  - name: default
+    when: "true"
+    steps:
+      - { role: approver, count: 1 }
+    expire_after: 1h
+
+break_glass:
+  max_duration: 30m
+  databases: "*"
 
 data_classes:
   - columns: ["public.users.email", "public.users.phone"]
@@ -67,6 +105,10 @@ policies:
   - name: deny-ddl
     when: stmt.kind == "ddl"
     action: deny
+  - name: deny-unbounded-writes
+    when: stmt.is_write && !stmt.has_where
+    action: deny
+    hint: "WHEREがありません。対象を絞って再実行してください。"
   - name: agents-never-see-no-ai
     when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
     action: deny
@@ -75,3 +117,7 @@ policies:
   - name: reads
     when: stmt.kind == "select" && !stmt.is_write
     action: allow
+  - name: writes
+    when: stmt.is_write
+    action: approve
+    require: { reason: true }
