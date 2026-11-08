@@ -147,7 +147,16 @@ func (s *Server) humanPrincipal(ctx context.Context, email string) (*identity.Pr
 	return &identity.Principal{Kind: identity.KindHuman, Human: email, Groups: groups, Scopes: []string{identity.ScopeRead}}, nil
 }
 
+// groupsOf resolves the dbgateway groups of a person. Every principal is
+// built through it, so it is also where deactivated users are refused.
 func (s *Server) groupsOf(ctx context.Context, email string) ([]string, error) {
+	active, err := s.store.UserActive(ctx, email)
+	if err != nil {
+		return nil, fmt.Errorf("auth: check user: %w", err)
+	}
+	if !active {
+		return nil, invalid("user deactivated")
+	}
 	var idpGroups []string
 	u, err := s.store.GetUser(ctx, email)
 	switch {

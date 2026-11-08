@@ -104,5 +104,6 @@
   "login.dev_heading": "開発用ログイン",
   "device.code_hint": "コードが一致しない場合は、このページを閉じてください。",
   "device.info_agents_before": "エージェント（",
-  "device.info_agents_after": "）には、ここから%sごとに短命のトークンが発行されます。"
+  "device.info_agents_after": "）には、ここから%sごとに短命のトークンが発行されます。",
+  "error.user_inactive": "このアカウントは無効化されています。管理者に問い合わせてください。"
 }

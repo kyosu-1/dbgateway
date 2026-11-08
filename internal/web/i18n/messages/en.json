@@ -104,5 +104,6 @@
   "login.dev_heading": "Development login",
   "device.code_hint": "If the code doesn't match, close this page.",
   "device.info_agents_before": "Agents (",
-  "device.info_agents_after": ") get short-lived tokens from here, renewed every %s."
+  "device.info_agents_after": ") get short-lived tokens from here, renewed every %s.",
+  "error.user_inactive": "This account has been deactivated. Contact your administrator."
 }

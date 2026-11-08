@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -108,7 +109,12 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 // completeLogin records the user and starts a session.
 func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, ls *loginState, email string, idpGroups []string) {
 	ctx := r.Context()
-	if err := s.store.UpsertUser(ctx, &store.User{Email: email, IDPGroups: idpGroups, LastLoginAt: s.now()}); err != nil {
+	if err := s.store.RecordLogin(ctx, email, idpGroups, s.now(), s.cfg.SCIM.Enabled); err != nil {
+		if errors.Is(err, store.ErrUserInactive) {
+			s.log.Warn("auth: login refused for deactivated user", "email", email)
+			s.errorPage(w, r, http.StatusForbidden, "error.user_inactive")
+			return
+		}
 		s.serverError(w, r, err)
 		return
 	}

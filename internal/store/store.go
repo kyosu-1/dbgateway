@@ -145,6 +145,13 @@ func (t *Token) Active(now time.Time) bool {
 type Store interface {
 	UpsertUser(ctx context.Context, u *User) error
 	GetUser(ctx context.Context, email string) (*User, error)
+	// RecordLogin upserts the user at login. It returns ErrUserInactive for
+	// users deactivated through SCIM; with SCIM enabled, SCIM-managed users
+	// keep their SCIM groups instead of the login-time IdP groups.
+	RecordLogin(ctx context.Context, email string, loginGroups []string, now time.Time, scimEnabled bool) error
+	// UserActive reports whether the user may authenticate (false only for
+	// users deactivated or deleted through SCIM).
+	UserActive(ctx context.Context, email string) (bool, error)
 
 	CreateSession(ctx context.Context, s *Session) error
 	GetSession(ctx context.Context, idHash string) (*Session, error)

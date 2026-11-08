@@ -26,6 +26,7 @@ import (
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
 	"github.com/kyosu-1/dbgateway/internal/pgproxy"
 	"github.com/kyosu-1/dbgateway/internal/policy"
+	"github.com/kyosu-1/dbgateway/internal/scim"
 	"github.com/kyosu-1/dbgateway/internal/store"
 )
 
@@ -101,6 +102,10 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 		ClockSkew:           30 * time.Second,
 	})
 	mux.Handle("/mcp", bearer(mcpHandler))
+
+	if cfg.SCIM.Enabled {
+		mux.Handle(scim.PathPrefix+"/", scim.NewHandler(scim.Options{Config: cfg, Store: st, Logger: logger}))
+	}
 
 	path, h := api.NewTokenService(authSrv, st, cfg)
 	mux.Handle(path, h)
