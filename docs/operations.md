@@ -171,6 +171,7 @@ databases:
 注意:
 
 - 資格情報は ADC から取ります。GKE では Workload Identity、GCE では VM のサービスアカウントを使い、サービスアカウントキーのファイルは使いません。トークンは `https://www.googleapis.com/auth/sqlservice.login` のスコープで要求します（Cloud SQL の Go コネクタと同じスコープ。人の ADC やメタデータサーバーのトークンはスコープの指定が無視され、`cloud-platform` のトークンになりますが、ログインに使えます）
+- 手元で人の ADC を使って試すときは、`gcloud auth application-default login` を、Cloud SQL の IAM ユーザーと同じアカウントで実行し直してください。ADC が別のアカウントのものだったり古かったりすると、`Cloud IAM user authentication failed`（SQLSTATE 28000）で拒否されます（gcloud のログインと ADC は別の資格情報です）
 - ユーザー名は小文字だけです。サービスアカウントのメールアドレスをそのまま書くと設定の検証でエラーになります
 - 本番ではパブリックIPではなく、プライベートIP（プライベートサービスアクセスまたは PSC）で接続します
 
