@@ -184,6 +184,27 @@ func TestRejectButtonWithoutApprovals(t *testing.T) {
 	}
 }
 
+func TestRunWithoutTokens(t *testing.T) {
+	cfg := testConfig(config.NotificationRoute{Events: []string{"approval_requested"}, To: config.NotificationTarget{Slack: "#db-approvals"}})
+	for name, env := range map[string]map[string]string{
+		"no bot token": {"TEST_SLACK_BOT": ""},
+		"no app token": {"TEST_SLACK_APP": ""},
+	} {
+		d := New(Options{Config: cfg, Logger: quietLogger(), Getenv: testEnv(env)})
+		done := make(chan error, 1)
+		go func() { done <- d.Run(context.Background()) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: Run = %v", name, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s: Run did not return", name)
+		}
+		d.Close()
+	}
+}
+
 func TestSlashCommandsAndLinking(t *testing.T) {
 	fs := newFakeSlack(t)
 	cfg := testConfig(config.NotificationRoute{Events: []string{"approval_requested"}, To: config.NotificationTarget{Slack: "#db-approvals"}})

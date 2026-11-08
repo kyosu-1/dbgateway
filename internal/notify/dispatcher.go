@@ -279,17 +279,28 @@ func (d *Dispatcher) Close() {
 	close(d.queue)
 	d.mu.Unlock()
 
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
+	end := time.Now().Add(10 * time.Second)
+	workerDone := false
 	select {
 	case <-d.done:
-	case <-deadline.C:
+		workerDone = true
+	case <-time.After(time.Until(end)):
+		// Abort in-flight Slack calls and give the worker a moment.
+		d.cancel()
+		select {
+		case <-d.done:
+			workerDone = true
+		case <-time.After(time.Second):
+		}
 	}
-	if d.webhook != nil {
+	// The worker feeds the webhook queue: close it only once the worker
+	// has stopped (otherwise leave both goroutines to exit with the
+	// process).
+	if d.webhook != nil && workerDone {
 		close(d.webhook.queue)
 		select {
 		case <-d.webhook.done:
-		case <-deadline.C:
+		case <-time.After(max(time.Until(end), time.Second)):
 		}
 	}
 	d.cancel()
