@@ -147,6 +147,7 @@ Cloud Run は `roles/run.invoker` を持つ人のリクエストだけを通し�
 
 - データベースと DB ユーザーは `deletion_policy = "ABANDON"` で、インスタンスと一緒に消えます（先に消そうとすると、`setup.sh` が作ったオブジェクトや権限のために失敗するため）
 - PSA の接続（`google_service_networking_connection`）も `deletion_policy = "ABANDON"` です。Cloud SQL を削除した直後は、サービス側の後片付けが終わっておらず、接続の削除が「Producer services ... are still using this connection」で失敗することがよくあるためです。接続は state から外れるだけで、VPC ネットワークの削除とともに消えます
+- **サブネットの削除は、Cloud Run を消した後もしばらく失敗します。** Direct VPC egress が使った IP アドレス（`serverless-ipv4-...`）は Cloud Run が自動で解放しますが、サービスの削除から解放まで時間がかかります（検証では数十分以上）。「`subnetwork ... is already being used by ... addresses/serverless-ipv4-...`」で失敗したら、残るのはネットワークとサブネット（料金はかかりません）だけなので、次で解放を確かめてから同じ `plan -destroy` / `apply` をやり直します: `gcloud compute addresses list --project <project> --filter="name~^serverless-ipv4"`
 - それでもネットワークや PSA の範囲の削除が「使用中」で失敗した場合は、しばらく（数分〜数十分）待ってから同じ `plan -destroy` / `apply` をやり直します。急ぐ場合は `gcloud compute networks peerings delete servicenetworking-googleapis-com --network=<name>` でピアリングを消してからやり直します
 - Cloud SQL のインスタンス名には乱数の接尾辞を付けています（削除した名前はしばらく再利用できないため）
 - Artifact Registry のリポジトリは中のイメージごと削除されます
