@@ -170,10 +170,14 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	path, h = api.NewGatewayService(authSrv, gw, s.approvals, cfg)
 	mux.Handle(path, h)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok\n"))
-	})
+	}
+	mux.HandleFunc("GET /healthz", health)
+	// /health for platforms that reserve /healthz on the public URL (Cloud
+	// Run reserves paths ending in "z"; its own probes can still use /healthz).
+	mux.HandleFunc("GET /health", health)
 
 	s.handler = withRequestLog(logger, mux)
 	ok = true

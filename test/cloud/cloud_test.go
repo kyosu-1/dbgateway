@@ -314,9 +314,11 @@ func TestDeployedGateway(t *testing.T) {
 	reqLink := env(t, "DBGW_CLOUD_ENROLL_REQUESTER", true)
 	apprLink := env(t, "DBGW_CLOUD_ENROLL_APPROVER", true)
 
-	resp, body := do(t, &http.Client{Transport: tg.transport, Timeout: 30 * time.Second}, "GET", tg.base+"/healthz", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("healthz: %d %s", resp.StatusCode, body)
+	// Reachability: the OAuth metadata is public. (/healthz cannot be used
+	// from outside on Cloud Run, which reserves paths ending in "z".)
+	resp, body := do(t, &http.Client{Transport: tg.transport, Timeout: 30 * time.Second}, "GET", tg.base+"/.well-known/oauth-protected-resource", nil, nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, tg.base+"/mcp") {
+		t.Fatalf("protected resource metadata: %d %.300s", resp.StatusCode, body)
 	}
 
 	// 1. The requester signs in with a passkey and connects an MCP client.

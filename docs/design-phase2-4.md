@@ -238,3 +238,11 @@ pii_detection:
 - **PII検出。** エージェントに返す public の列だけを検査し、見つけた部分だけを伏せる（`deny` なら結果全体を返さない）。人の結果は区分だけで決める
 - **管理用DBと監査ログの PostgreSQL 対応。** 監査ログは複数台でも1本のハッシュチェーンになるよう、アドバイザリーロックで書き込みを直列化する。SQLite から PostgreSQL への移行は `dbgw store import-sqlite`
 - **ユーザー画面は読み取りのみ。** 権限の変更は Git の PR で行う方針のまま、画面では設定に貼る YAML と PR の説明文を生成する
+
+## 本番の置き場所（コンテナ基盤）
+
+dbgateway は ECS Fargate や Cloud Run のようなコンテナ基盤に置き、DB と同じネットワークから接続します。どちらも使い捨ての検証環境で、パスキーのログイン、OAuth、MCP、IAM データベース認証、承認後の書き込みの実行までを確認しました（`deploy/aws-ecs`、`deploy/gcp-cloudrun`、`test/cloud`）。
+
+- **共通。** 設定は環境変数 `DBGW_CONFIG_YAML` で、DB の CA は `sslrootcert_env` で渡す（ファイルを置けない基盤のため）。複数台にするので、管理用DBと監査ログは PostgreSQL に置く（`store.driver: postgres`、`audit.output: postgres`）
+- **ECS Fargate。** プライベートサブネットのタスクを ALB の背後に置き、タスクロールの `rds-db:connect` で `auth: aws_iam` を使う。タスク定義は環境変数を含めて 64 KiB までなので、RDS の CA はリージョンのバンドルを渡す。PostgreSQL プロキシを使うなら NLB を追加する
+- **Cloud Run。** 承認後の実行や期限切れの処理はリクエストの外で動くため、**CPU を常時割り当て（`cpu_idle = false`）、最小インスタンス数を1以上**にする。Cloud SQL には Direct VPC egress でプライベート IP につなぎ、サービスアカウントで `auth: gcp_iam` を使う。Cloud Run は HTTP 系しか受けられないため PostgreSQL プロキシは使えない。また Cloud Run は末尾が `z` のパス（`/healthz` など）を外部から使えないため、外部の死活監視には `/health` を使う
