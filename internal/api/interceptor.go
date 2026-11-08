@@ -13,7 +13,7 @@ import (
 
 // humanOnly authenticates every unary RPC with a human bearer token and
 // stores the principal in the context. Agent tokens are refused: agents can
-// never manage tokens.
+// never manage tokens, and they query through MCP, not the human API.
 func humanOnly(a *auth.Server) connect.UnaryInterceptorFunc {
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
@@ -32,7 +32,7 @@ func humanOnly(a *auth.Server) connect.UnaryInterceptorFunc {
 				return nil, internal(err)
 			}
 			if p.Kind != identity.KindHuman {
-				return nil, connect.NewError(connect.CodePermissionDenied, errors.New("agent tokens cannot use the token API"))
+				return nil, connect.NewError(connect.CodePermissionDenied, errors.New("agent tokens cannot use this API (it is for people; agents use MCP)"))
 			}
 			return next(identity.WithPrincipal(ctx, p), req)
 		}
