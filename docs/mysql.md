@@ -170,6 +170,7 @@ PostgreSQL と同じ規則で、結果の各列と、条件・集計・並べ替
 - 書き込みの実行（承認後の実行）は未対応です。解析と分類は行います。
 - `sql_mode` は固定で、利用者が変えることはできません（`SET` は拒否）。
 - カタログは `information_schema.COLUMNS` / `TABLES` / `VIEWS` から、読み取り用ユーザーに見える範囲を読みます。`mysql` / `performance_schema` / `sys` / `information_schema` のビューは展開せず、元の表として扱います。`search_objects` では、スキーマを明示しない限りこれらのシステムスキーマを表示しません。
+- `INVISIBLE` 列（`sql_generate_invisible_primary_key` で作られる `my_row_id` を含む）はカタログに入れません。`SELECT *` はこれらの列を返さないため、入れると `*` の展開と実際の結果がずれるからです。名前を明示して参照すると「判断できない」になります。
 - 接続を毎回張り直すため、PostgreSQL より1リクエストあたりの遅延が少し大きくなります。
 
 ## 開発環境とテスト

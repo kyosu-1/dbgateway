@@ -9,6 +9,7 @@ package mysql_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -532,6 +533,60 @@ func TestValues(t *testing.T) {
 	}
 	if s, ok := row[13].(string); !ok || !strings.HasSuffix(s, "Z") || !strings.Contains(s, "T") {
 		t.Errorf("created_at = %#v", row[13])
+	}
+}
+
+// rootDB returns a plain connection as root for test fixtures.
+func rootDB(t *testing.T) *sql.DB {
+	t.Helper()
+	mc := gomysql.NewConfig()
+	mc.User, mc.Passwd = "root", env("DBGW_TEST_MYSQL_ROOT_PASSWORD", "root")
+	mc.Net, mc.Addr, mc.DBName = "tcp", fmt.Sprintf("%s:%d", env("DBGW_TEST_MYSQL_HOST", "127.0.0.1"), port()), "app"
+	connector, err := gomysql.NewConnector(mc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(connector)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// TestInvisibleColumns checks that INVISIBLE columns, which "SELECT *"
+// does not return, are left out of star expansion, and that naming one
+// explicitly is unknown.
+func TestInvisibleColumns(t *testing.T) {
+	ctx := context.Background()
+	root := rootDB(t)
+	for _, q := range []string{
+		"DROP TABLE IF EXISTS it_invisible",
+		"CREATE TABLE it_invisible (id INT PRIMARY KEY, secret VARCHAR(16) INVISIBLE, note VARCHAR(16))",
+		"INSERT INTO it_invisible (id, secret, note) VALUES (1, 's3cret', 'n')",
+	} {
+		if _, err := root.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _, _ = root.ExecContext(context.Background(), "DROP TABLE IF EXISTS it_invisible") })
+
+	a, c := connect(t, "dbgw_reader", "reader")
+	cat, err := a.Catalog(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa, err := a.Analyze(ctx, "SELECT * FROM it_invisible", cat)
+	if err != nil || qa.Statement.Unknown {
+		t.Fatalf("analyze: %v %+v", err, qa)
+	}
+	res, err := a.Execute(ctx, c, "SELECT * FROM it_invisible", readOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Columns) != len(qa.Output) || len(qa.Output) != 2 || qa.Output[1].Sources[0].Column != "note" {
+		t.Fatalf("result %+v, analysis %+v", res.Columns, qa.Output)
+	}
+	qa, err = a.Analyze(ctx, "SELECT secret FROM it_invisible", cat)
+	if err == nil && !qa.Statement.Unknown {
+		t.Error("explicit reference to an invisible column must be unknown")
 	}
 }
 

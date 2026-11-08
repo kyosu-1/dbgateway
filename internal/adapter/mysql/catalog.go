@@ -10,11 +10,16 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 )
 
+// INVISIBLE columns (including generated invisible primary keys) are left
+// out: "SELECT *" does not return them, so including them would misalign
+// star expansion with the result. Naming one explicitly is then
+// unresolvable, i.e. unknown.
 const catalogColumnsSQL = `
 SELECT c.TABLE_SCHEMA, c.TABLE_NAME, t.TABLE_TYPE, c.COLUMN_NAME, c.COLUMN_TYPE,
        c.IS_NULLABLE = 'YES', c.COLUMN_COMMENT
 FROM information_schema.COLUMNS c
 JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+WHERE c.EXTRA NOT LIKE '%INVISIBLE%'
 ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION`
 
 // View definitions are only expanded for user schemas; system views are
