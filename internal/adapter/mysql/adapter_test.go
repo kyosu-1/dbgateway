@@ -139,7 +139,7 @@ func TestJSONValue(t *testing.T) {
 }
 
 func TestNewPoolRequiresPassword(t *testing.T) {
-	_, err := newPool(config.Endpoint{Host: "h", Port: 3306, DBName: "app", SSLMode: "disable"}, "r", "DBGW_TEST_UNSET_PASSWORD_ENV")
+	_, err := newPool(config.Endpoint{Host: "h", Port: 3306, DBName: "app", SSLMode: "disable"}, "r", "DBGW_TEST_UNSET_PASSWORD_ENV", false)
 	if err == nil || !strings.Contains(err.Error(), "DBGW_TEST_UNSET_PASSWORD_ENV") {
 		t.Errorf("err = %v", err)
 	}

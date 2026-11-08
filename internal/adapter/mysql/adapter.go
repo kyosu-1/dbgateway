@@ -46,6 +46,7 @@ type conn struct {
 	schema  string // the default database (MySQL "schema")
 	read    *sql.DB
 	replica *sql.DB // nil when no replica is configured
+	write   *sql.DB // nil when no write user is configured
 }
 
 func (c *conn) Close() {
@@ -53,21 +54,31 @@ func (c *conn) Close() {
 	if c.replica != nil {
 		_ = c.replica.Close()
 	}
+	if c.write != nil {
+		_ = c.write.Close()
+	}
 }
 
 // Connect opens the read pool (and the replica pool when configured).
 // Pools connect lazily, so a database that is down does not prevent
 // dbgateway from starting.
 func (a *Adapter) Connect(_ context.Context, cfg *config.Database) (analysis.Conn, error) {
-	read, err := newPool(cfg.Primary, cfg.Primary.ReadUser, cfg.Primary.PasswordEnv)
+	read, err := newPool(cfg.Primary, cfg.Primary.ReadUser, cfg.Primary.PasswordEnv, false)
 	if err != nil {
 		return nil, fmt.Errorf("database %s: %w", cfg.Name, err)
 	}
 	c := &conn{cfg: cfg, schema: cfg.Primary.DBName, read: read}
-	if cfg.Replica != nil {
-		c.replica, err = newPool(*cfg.Replica, cfg.Replica.ReadUser, cfg.Replica.PasswordEnv)
+	if cfg.Primary.WriteUser != "" {
+		c.write, err = newPool(cfg.Primary, cfg.Primary.WriteUser, cfg.Primary.WritePasswordEnv, true)
 		if err != nil {
 			_ = read.Close()
+			return nil, fmt.Errorf("database %s write user: %w", cfg.Name, err)
+		}
+	}
+	if cfg.Replica != nil {
+		c.replica, err = newPool(*cfg.Replica, cfg.Replica.ReadUser, cfg.Replica.PasswordEnv, false)
+		if err != nil {
+			c.Close()
 			return nil, fmt.Errorf("database %s replica: %w", cfg.Name, err)
 		}
 	}
@@ -106,7 +117,11 @@ func tlsConfig(ep config.Endpoint) (*tls.Config, error) {
 	return nil, fmt.Errorf("sslmode %q is not supported for mysql (use disable, require or verify-full)", ep.SSLMode)
 }
 
-func newPool(ep config.Endpoint, user, passwordEnv string) (*sql.DB, error) {
+// newPool opens a pool for one user. For the write pool, foundRows makes
+// RowsAffected count matched rows rather than only changed rows, so the
+// affected-rows limit cannot be bypassed by rows that happen to be
+// unchanged.
+func newPool(ep config.Endpoint, user, passwordEnv string, foundRows bool) (*sql.DB, error) {
 	mc := gomysql.NewConfig()
 	mc.User = user
 	if passwordEnv != "" {
@@ -137,6 +152,7 @@ func newPool(ep config.Endpoint, user, passwordEnv string) (*sql.DB, error) {
 	mc.AllowAllFiles = false
 	mc.AllowCleartextPasswords = false
 	mc.AllowOldPasswords = false
+	mc.ClientFoundRows = foundRows
 
 	connector, err := gomysql.NewConnector(mc)
 	if err != nil {
@@ -162,6 +178,22 @@ func (c *conn) pool(replica bool) *sql.DB {
 // of being returned to the pool: no session state can leak into the next
 // request.
 func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func(context.Context, *sql.Tx) error) error {
+	return c.withTx(ctx, c.pool(opt.Replica), opt, true, fn)
+}
+
+// writePool returns the pool of the write user.
+func (c *conn) writePool() (*sql.DB, error) {
+	if c.write == nil {
+		return nil, fmt.Errorf("database %s has no write_user configured", c.cfg.Name)
+	}
+	return c.write, nil
+}
+
+// withTx runs fn in a transaction (READ ONLY when readOnly) on a dedicated
+// connection of pool, with the fixed session settings. The connection is
+// discarded afterwards (see withReadTx). fn's error decides commit: the
+// caller commits explicitly; anything not committed is rolled back.
+func (c *conn) withTx(ctx context.Context, pool *sql.DB, opt analysis.ExecOptions, readOnly bool, fn func(context.Context, *sql.Tx) error) error {
 	timeout := opt.StatementTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -169,7 +201,7 @@ func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func
 	ctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
 
-	sc, err := c.pool(opt.Replica).Conn(ctx)
+	sc, err := pool.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -190,7 +222,7 @@ func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func
 		SQLMode, max(timeout.Milliseconds(), 1), lockSec, lockSec)); err != nil {
 		return fmt.Errorf("configure session: %w", err)
 	}
-	tx, err := sc.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := sc.BeginTx(ctx, &sql.TxOptions{ReadOnly: readOnly})
 	if err != nil {
 		return err
 	}
@@ -200,10 +232,10 @@ func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func
 
 // Execute runs a read-only statement as a server-side prepared statement.
 func (a *Adapter) Execute(ctx context.Context, ac analysis.Conn, query string, opt analysis.ExecOptions) (*analysis.Result, error) {
-	if !opt.ReadOnly {
-		return nil, errors.New("write execution is not supported yet for mysql")
-	}
 	c := ac.(*conn)
+	if !opt.ReadOnly {
+		return c.executeWrite(ctx, query, opt)
+	}
 	res := &analysis.Result{TotalRows: -1}
 	start := time.Now()
 	err := c.withReadTx(ctx, opt, func(ctx context.Context, tx *sql.Tx) error {
@@ -278,8 +310,20 @@ func (a *Adapter) Execute(ctx context.Context, ac analysis.Conn, query string, o
 // has already been analyzed as a single statement.
 func (a *Adapter) Estimate(ctx context.Context, ac analysis.Conn, query string, opt analysis.ExecOptions) (*analysis.Estimate, error) {
 	c := ac.(*conn)
+	pool, readOnly := c.pool(opt.Replica), true
+	if !opt.ReadOnly {
+		// EXPLAIN of a write needs the write user's privileges, and MySQL
+		// refuses EXPLAIN UPDATE/DELETE inside a READ ONLY transaction. The
+		// transaction is never committed (withTx rolls back), and EXPLAIN
+		// does not execute the statement.
+		wp, err := c.writePool()
+		if err != nil {
+			return nil, err
+		}
+		pool, readOnly = wp, false
+	}
 	var est *analysis.Estimate
-	err := c.withReadTx(ctx, opt, func(ctx context.Context, tx *sql.Tx) error {
+	err := c.withTx(ctx, pool, opt, readOnly, func(ctx context.Context, tx *sql.Tx) error {
 		var raw string
 		if err := tx.QueryRowContext(ctx, "EXPLAIN FORMAT=JSON "+query).Scan(&raw); err != nil {
 			return err
@@ -364,4 +408,44 @@ func number(v any) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
+}
+
+// executeWrite runs an approved write with the write user in a read-write
+// transaction and commits only when at most opt.MaxAffectedRows rows were
+// affected (matched). MySQL has no RETURNING, so no rows are returned.
+func (c *conn) executeWrite(ctx context.Context, query string, opt analysis.ExecOptions) (*analysis.Result, error) {
+	if opt.MaxAffectedRows <= 0 {
+		return nil, errors.New("write execution requires a positive MaxAffectedRows")
+	}
+	pool, err := c.writePool()
+	if err != nil {
+		return nil, err
+	}
+	res := &analysis.Result{TotalRows: 0}
+	start := time.Now()
+	err = c.withTx(ctx, pool, opt, false, func(ctx context.Context, tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		r, err := stmt.ExecContext(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := r.RowsAffected()
+		if err != nil {
+			return err
+		}
+		res.RowsAffected = n
+		if n > opt.MaxAffectedRows {
+			return &analysis.AffectedRowsError{Affected: n, Max: opt.MaxAffectedRows}
+		}
+		return tx.Commit()
+	})
+	res.Duration = time.Since(start)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
