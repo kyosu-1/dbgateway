@@ -71,6 +71,7 @@ type Config struct {
 	DataClasses   []DataClass             `yaml:"data_classes"`
 	SemanticTypes map[string]SemanticType `yaml:"semantic_types"`
 	Policies      []Rule                  `yaml:"policies"`
+	PGProxy       PGProxy                 `yaml:"pgproxy"`
 
 	// Phase 2 sections. They are accepted so that a full configuration
 	// validates, but are not used yet.
@@ -542,6 +543,8 @@ func (c *Config) validate() error {
 		// CEL compilation and the "allow must never match a write" check
 		// are done by the policy package (see policy.Compile).
 	}
+
+	c.validatePGProxy(add)
 
 	if c.Risk.Kind != 0 || c.ApprovalRules.Kind != 0 {
 		c.warn("risk/approval_rules: approvals are planned for phase 2; these sections are ignored and writes are always denied")
