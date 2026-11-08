@@ -15,6 +15,7 @@ output "public_ip" {
 output "server_ca_cert" {
   description = "PEM of the instance's server CA, for sslrootcert with sslmode=verify-ca"
   value       = google_sql_database_instance.this.server_ca_cert[0].cert
+  sensitive   = true # the provider marks server_ca_cert sensitive; the CA is public data
 }
 
 output "iam_db_user" {

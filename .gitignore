@@ -37,3 +37,5 @@ deploy/gcp/tfplan
 
 # Claude Code agent worktrees
 /.claude/
+deploy/gcp/tfplan
+deploy/gcp/*.pem
