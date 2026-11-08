@@ -79,7 +79,11 @@ func (c *Config) validateDSNEnv(field, name string, add func(string, ...any)) {
 // StoreDSN returns the PostgreSQL DSN of the management database from
 // store.dsn_env. The error never includes the DSN.
 func (c *Config) StoreDSN() (string, error) {
-	return dsnFromEnv("store.dsn_env", c.Store.DSNEnv)
+	dsn, err := dsnFromEnv("store.dsn_env", c.Store.DSNEnv)
+	if err != nil {
+		return "", err
+	}
+	return withSSLRootCert(dsn, c.Store.SSLRootCert), nil
 }
 
 // AuditDSN returns the PostgreSQL DSN of the audit database

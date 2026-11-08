@@ -20,10 +20,13 @@ const defaultConfig = "dbgateway.yaml"
 
 func configFlag(cmd *cobra.Command, required bool) *string {
 	def := os.Getenv("DBGW_CONFIG")
+	if def == "" && os.Getenv("DBGW_CONFIG_YAML") != "" {
+		def = config.EnvPrefix + "DBGW_CONFIG_YAML"
+	}
 	if def == "" && !required {
 		def = defaultConfig
 	}
-	return cmd.Flags().StringP("config", "c", def, "path to dbgateway.yaml (env DBGW_CONFIG)")
+	return cmd.Flags().StringP("config", "c", def, `path to dbgateway.yaml, or "env:NAME" to read it from an environment variable (env DBGW_CONFIG; DBGW_CONFIG_YAML holds the content)`)
 }
 
 // loadConfig loads the configuration and compiles the policies, printing

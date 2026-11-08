@@ -139,6 +139,11 @@ type Store struct {
 	Driver string `yaml:"driver"`  // sqlite | postgres (see store_pg.go)
 	Path   string `yaml:"path"`    // sqlite
 	DSNEnv string `yaml:"dsn_env"` // postgres: environment variable holding the DSN
+	// SSLRootCertEnv names an environment variable holding the PEM CA of the
+	// management database (postgres); it is added to the DSN as sslrootcert.
+	SSLRootCertEnv string `yaml:"sslrootcert_env"`
+
+	SSLRootCert string `yaml:"-"` // materialized from SSLRootCertEnv
 }
 
 type Audit struct {
@@ -195,6 +200,10 @@ type Endpoint struct {
 	WritePasswordEnv string `yaml:"write_password_env"`
 	SSLMode          string `yaml:"sslmode"`
 	SSLRootCert      string `yaml:"sslrootcert"`
+	// SSLRootCertEnv names an environment variable holding the PEM CA
+	// instead of a file (for containers where files cannot be mounted,
+	// e.g. ECS). Mutually exclusive with sslrootcert.
+	SSLRootCertEnv string `yaml:"sslrootcert_env"`
 }
 
 type Limits struct {
@@ -256,8 +265,21 @@ type Require struct {
 	Replica bool `yaml:"replica"`
 }
 
-// Load reads, parses, defaults and validates a configuration file.
+// EnvPrefix selects configuration content from an environment variable
+// instead of a file: Load("env:DBGW_CONFIG_YAML"). Useful in containers
+// where files cannot be mounted (e.g. ECS with Secrets Manager).
+const EnvPrefix = "env:"
+
+// Load reads, parses, defaults and validates a configuration file, or the
+// content of an environment variable when path is "env:NAME".
 func Load(path string) (*Config, error) {
+	if name, ok := strings.CutPrefix(path, EnvPrefix); ok {
+		v := os.Getenv(name)
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("environment variable %s is empty", name)
+		}
+		return Parse([]byte(v))
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -277,6 +299,9 @@ func Parse(raw []byte) (*Config, error) {
 	c.Version = hex.EncodeToString(sum[:])[:12]
 	c.applyDefaults()
 	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	if err := c.materializeCerts(); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -472,6 +497,9 @@ func (c *Config) validate() error {
 				add("%s.read_user: required", pp)
 			}
 			validateEndpointAuth(pp, ep.e, add, c.warn)
+			if ep.e.SSLRootCert != "" && ep.e.SSLRootCertEnv != "" {
+				add("%s: sslrootcert and sslrootcert_env are mutually exclusive", pp)
+			}
 			if db.Type == "mysql" && ep.e.Auth != "password" {
 				add("%s.auth: only password is supported for mysql", pp)
 			}
