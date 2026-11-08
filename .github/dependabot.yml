@@ -12,6 +12,10 @@ updates:
   - package-ecosystem: npm
     directory: /docs
     schedule: { interval: monthly }
+    ignore:
+      # vitepress-plugin-mermaid supports mermaid 10 and 11 only.
+      - dependency-name: mermaid
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
