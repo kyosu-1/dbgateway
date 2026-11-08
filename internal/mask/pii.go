@@ -827,7 +827,7 @@ func validCard(digits []byte) bool {
 }
 
 // validMyNumber checks the check digit of a 12-digit individual number
-// (総務省令: Pn is the n-th digit from the right excluding the check digit,
+// (per the Japanese ministerial ordinance: Pn is the n-th digit from the right excluding the check digit,
 // Qn = n+1 for n ≤ 6 and n-5 for n ≥ 7).
 func validMyNumber(digits []byte) bool {
 	if len(digits) != 12 || allSame(digits) {

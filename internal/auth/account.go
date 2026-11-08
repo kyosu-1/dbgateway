@@ -55,7 +55,7 @@ type grantRow struct {
 // only when one is set with SetSlackLinker. Implementations must be safe
 // for concurrent use.
 type SlackLinker interface {
-	// Linked returns the linked Slack user (e.g. "@taro") of a person.
+	// Linked returns the linked Slack user (e.g. "@alice") of a person.
 	Linked(email string) (slackUser string, ok bool)
 	// IssueCode returns a one-time code the person enters in Slack
 	// (`/dbgw link <code>`) and its expiry.

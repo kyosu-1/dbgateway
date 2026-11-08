@@ -172,23 +172,23 @@ func DescribeError(err error) (string, string) {
 	var ae *analysis.AffectedRowsError
 	switch {
 	case errors.As(err, &ce):
-		msg := fmt.Sprintf("判定が変わったため実行しません（現在の判定: %s、ルール: %s", ce.Decision, ce.Rule)
+		msg := fmt.Sprintf("Not executed because the decision has changed (current decision: %s, rule: %s", ce.Decision, ce.Rule)
 		if ce.ApprovalRule != "" {
-			msg += "、承認ルール: " + ce.ApprovalRule
+			msg += ", approval rule: " + ce.ApprovalRule
 		}
-		msg += "）。"
+		msg += ")."
 		if ce.Message != "" {
-			msg += ce.Message
+			msg += " " + ce.Message
 		}
 		return msg, ""
 	case errors.As(err, &ae):
-		return fmt.Sprintf("影響行数（%d行）が上限（%d行）を超えたため、ロールバックしました。", ae.Affected, ae.Max), ""
+		return fmt.Sprintf("Rolled back: %d rows were affected, exceeding the limit of %d rows.", ae.Affected, ae.Max), ""
 	case errors.Is(err, ErrUnknownDatabase):
-		return "接続先が設定から削除されたため実行しません。", ""
+		return "Not executed because the database was removed from the configuration.", ""
 	case errors.Is(err, errUntraceable):
 		return msgUntraceable, ""
 	case errors.Is(err, errColumnMismatch):
-		return "書き込みは完了しましたが、RETURNING の列数が解析結果と一致しないため、結果は返しません。", ""
+		return "The write completed, but the RETURNING columns do not match the analysis, so no rows are returned.", ""
 	}
 	return describeDBError(err)
 }
@@ -213,7 +213,7 @@ func (g *Gateway) breakGlassWrite(ctx context.Context, p *identity.Principal, d 
 		msg, code := DescribeError(err)
 		if wr != nil { // committed, but the RETURNING rows are withheld
 			entry.Extra["rows_affected"] = wr.RowsAffected
-			msg += fmt.Sprintf("（影響行数: %d）", wr.RowsAffected)
+			msg += fmt.Sprintf(" (rows affected: %d)", wr.RowsAffected)
 		}
 		return failed(msg, code)
 	}
@@ -221,7 +221,7 @@ func (g *Gateway) breakGlassWrite(ctx context.Context, p *identity.Principal, d 
 	resp.Columns, resp.Rows, resp.RowCount, resp.Truncated = wr.Columns, wr.Rows, wr.RowCount, wr.Truncated
 	affected := wr.RowsAffected
 	resp.RowsAffected = &affected
-	resp.Hint = "緊急昇格中のため、承認なしで実行しました（監査ログに記録されています）。"
+	resp.Hint = "Executed without approval because a break-glass elevation is active (recorded in the audit log)."
 	entry.Result = &audit.ResultInfo{Rows: wr.RowCount, Bytes: wr.Bytes, DurationMS: wr.DurationMS, Truncated: wr.Truncated,
 		MaskedColumns: wr.MaskedColumns}
 	entry.Extra["rows_affected"] = wr.RowsAffected

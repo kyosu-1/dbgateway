@@ -29,26 +29,26 @@ func NewAnalyzer(funcs *FunctionAllowlist) *Analyzer {
 // Analyze parses and analyzes a single SQL statement.
 func (a *Analyzer) Analyze(_ context.Context, sql string, cat *analysis.Catalog) (*analysis.QueryAnalysis, error) {
 	if strings.TrimSpace(sql) == "" {
-		return nil, analysis.Reject("empty", "SQLが空です。", "実行するSQLを1文だけ指定してください。")
+		return nil, analysis.Reject("empty", "The SQL is empty.", "Specify exactly one SQL statement to run.")
 	}
 	tree, err := pg.Parse(sql)
 	if err != nil {
 		return nil, analysis.Reject("parse_error",
-			fmt.Sprintf("SQLを解析できませんでした（%s）。解析できないSQLは安全のため実行しません。", err.Error()),
-			"PostgreSQLの構文として正しいか確認して、1文だけを送ってください。")
+			fmt.Sprintf("Could not parse the SQL (%s). SQL that cannot be parsed is not run, for safety.", err.Error()),
+			"Check that it is valid PostgreSQL syntax and send a single statement.")
 	}
 	switch len(tree.Stmts) {
 	case 0:
-		return nil, analysis.Reject("empty", "SQLに文が含まれていません。", "実行するSQLを1文だけ指定してください。")
+		return nil, analysis.Reject("empty", "The SQL contains no statement.", "Specify exactly one SQL statement to run.")
 	case 1:
 	default:
 		return nil, analysis.Reject("multiple_statements",
-			fmt.Sprintf("%d個の文が含まれています。複数の文をまとめて送ることはできません。", len(tree.Stmts)),
-			"セミコロンで区切らず、1回の呼び出しで1文だけを送ってください。")
+			fmt.Sprintf("The SQL contains %d statements. Multiple statements cannot be sent together.", len(tree.Stmts)),
+			"Send exactly one statement per call; do not separate statements with semicolons.")
 	}
 	stmt := tree.Stmts[0].Stmt
 	if stmt == nil || stmt.Node == nil {
-		return nil, analysis.Reject("empty", "SQLに文が含まれていません。", "実行するSQLを1文だけ指定してください。")
+		return nil, analysis.Reject("empty", "The SQL contains no statement.", "Specify exactly one SQL statement to run.")
 	}
 
 	qa := &analysis.QueryAnalysis{Normalized: normalize(sql)}
@@ -122,42 +122,42 @@ func classify(n *pg.Node) (analysis.StmtKind, *analysis.Rejection) {
 		return analysis.KindTruncate, nil
 	case *pg.Node_TransactionStmt:
 		return "", analysis.Reject("transaction_control",
-			"トランザクション制御（BEGIN/COMMIT/ROLLBACKなど）は実行できません。",
-			"トランザクションはdbgatewayが管理します。SQL本体だけを送ってください。")
+			"Transaction control (BEGIN / COMMIT / ROLLBACK, etc.) is not allowed.",
+			"dbgateway manages transactions. Send only the SQL statement itself.")
 	case *pg.Node_VariableSetStmt, *pg.Node_AlterSystemStmt:
 		return "", analysis.Reject("set",
-			"SET / RESET / SET ROLE などのセッション設定は変更できません。",
-			"セッション設定はdbgatewayが固定しています。設定を変えずにSQL本体だけを送ってください。")
+			"Session settings (SET / RESET / SET ROLE, etc.) cannot be changed.",
+			"dbgateway fixes the session settings. Send only the SQL statement itself, without changing settings.")
 	case *pg.Node_VariableShowStmt:
-		return "", analysis.Reject("show", "SHOW は実行できません。", "設定値の確認が必要な場合は管理者に問い合わせてください。")
+		return "", analysis.Reject("show", "SHOW is not allowed.", "If you need a setting's value, ask an administrator.")
 	case *pg.Node_DoStmt:
-		return "", analysis.Reject("do_block", "DOブロックは実行できません。", "手続き的な処理は使わず、1つのSELECT文で表現してください。")
+		return "", analysis.Reject("do_block", "DO blocks are not allowed.", "Do not use procedural code; express it as a single SELECT statement.")
 	case *pg.Node_CopyStmt:
-		return "", analysis.Reject("copy", "COPY は実行できません（サーバー上のファイルやプログラムへのアクセスを防ぐため）。", "SELECT文で必要な行だけを取得してください。")
+		return "", analysis.Reject("copy", "COPY is not allowed (this prevents access to files and programs on the server).", "Fetch only the rows you need with a SELECT statement.")
 	case *pg.Node_ExplainStmt:
 		if explainHasAnalyze(x.ExplainStmt) {
-			return "", analysis.Reject("explain_analyze", "EXPLAIN ANALYZE は文を実際に実行するため実行できません。", "ANALYZEを外すか、SELECT文そのものを送ってください。")
+			return "", analysis.Reject("explain_analyze", "EXPLAIN ANALYZE is not allowed because it actually runs the statement.", "Remove ANALYZE, or send the SELECT statement itself.")
 		}
-		return "", analysis.Reject("explain", "EXPLAIN は execute_sql では実行できません。", "SELECT文そのものを送ってください。見積もり行数はdbgatewayが自動で確認します。")
+		return "", analysis.Reject("explain", "EXPLAIN cannot be run with execute_sql.", "Send the SELECT statement itself; dbgateway checks the estimated rows automatically.")
 	case *pg.Node_CallStmt:
-		return "", analysis.Reject("call", "CALL（プロシージャの呼び出し）は実行できません。", "SELECT文で必要なデータを取得してください。")
+		return "", analysis.Reject("call", "CALL (calling a procedure) is not allowed.", "Fetch the data you need with a SELECT statement.")
 	case *pg.Node_LockStmt:
-		return "", analysis.Reject("lock", "LOCK は実行できません。", "ロックを取らずにSELECT文を送ってください。")
+		return "", analysis.Reject("lock", "LOCK is not allowed.", "Send a SELECT statement without taking locks.")
 	case *pg.Node_NotifyStmt, *pg.Node_ListenStmt, *pg.Node_UnlistenStmt:
-		return "", analysis.Reject("notify", "NOTIFY / LISTEN / UNLISTEN は実行できません。", "通知機能は使えません。")
+		return "", analysis.Reject("notify", "NOTIFY / LISTEN / UNLISTEN is not allowed.", "Notifications are not available.")
 	case *pg.Node_PrepareStmt, *pg.Node_ExecuteStmt, *pg.Node_DeallocateStmt:
-		return "", analysis.Reject("prepare", "PREPARE / EXECUTE / DEALLOCATE は実行できません。", "SQL本体を直接送ってください。")
+		return "", analysis.Reject("prepare", "PREPARE / EXECUTE / DEALLOCATE is not allowed.", "Send the SQL statement itself directly.")
 	case *pg.Node_DeclareCursorStmt, *pg.Node_FetchStmt, *pg.Node_ClosePortalStmt:
-		return "", analysis.Reject("cursor", "カーソル操作は実行できません。", "SELECT文を直接送ってください。行数の上限はdbgatewayがかけます。")
+		return "", analysis.Reject("cursor", "Cursor operations are not allowed.", "Send the SELECT statement directly; dbgateway applies the row limit.")
 	case *pg.Node_DiscardStmt, *pg.Node_LoadStmt, *pg.Node_CheckPointStmt:
-		return "", analysis.Reject("utility", "この種類のユーティリティ文は実行できません。", "SELECT文を送ってください。")
+		return "", analysis.Reject("utility", "This kind of utility statement is not allowed.", "Send a SELECT statement.")
 	}
 	if isDDL(n) {
 		return analysis.KindDDL, nil
 	}
 	return "", analysis.Reject("unsupported_statement",
-		fmt.Sprintf("この種類の文（%s）は判定できないため実行しません。", nodeName(n)),
-		"SELECT文で表現してください。")
+		fmt.Sprintf("This kind of statement (%s) cannot be evaluated, so it is not run.", nodeName(n)),
+		"Express it as a SELECT statement.")
 }
 
 func explainHasAnalyze(e *pg.ExplainStmt) bool {

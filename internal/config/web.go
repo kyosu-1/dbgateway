@@ -14,7 +14,7 @@ import (
 //
 //	auditors:
 //	  - group: security
-//	  - user: hanako@example.com
+//	  - user: bob@example.com
 type Auditor struct {
 	User  string `yaml:"user"`
 	Group string `yaml:"group"`

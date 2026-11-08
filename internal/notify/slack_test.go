@@ -19,7 +19,7 @@ func approvalEvent(t events.Type, status string) events.Event {
 		Labels:    map[string]string{"env": "prod"},
 		Principal: &events.Principal{Kind: "agent", Human: "taro@example.com", Agent: "claude-code", ClientID: "c1"},
 		SQL:       "UPDATE users SET email = $1 WHERE id = $2", Tables: []string{"public.users"}, EstimateRows: &est,
-		Reason: "<!channel> 問い合わせ#12 <https://evil.example|click> & fix", Status: status,
+		Reason: "<!channel> ticket#12 <https://evil.example|click> & fix", Status: status,
 		Approvers: []string{"hanako@example.com", "jiro@example.com"},
 		URL:       "https://dbgw.example.com/approvals/req_abc",
 		Detail:    map[string]string{"risk": "high", "approval_rule": "prod-writes", "max_affected_rows": "84"},
@@ -64,12 +64,12 @@ func TestApprovalMessageThreadAndUpdate(t *testing.T) {
 	}
 	blocks := unescapeJSON(root.Get("blocks"))
 	for _, want := range []string{
-		`"type":"header"`, "承認依頼 · prod-main",
-		"claude-code · taro@example.com の代理",
+		`"type":"header"`, "Approval requested · prod-main",
+		"claude-code on behalf of taro@example.com",
 		"```UPDATE users SET email = $1 WHERE id = $2```",
-		"public.users", "42", "高",
-		`"action_id":"dbgw_open"`, "承認画面を開く", `"url":"https://dbgw.example.com/approvals/req_abc"`,
-		`"action_id":"dbgw_reject"`, `"value":"req_abc"`, "却下",
+		"public.users", "42", "high",
+		`"action_id":"dbgw_open"`, "Open approval page", `"url":"https://dbgw.example.com/approvals/req_abc"`,
+		`"action_id":"dbgw_reject"`, `"value":"req_abc"`, "Reject",
 		"<@UHANAKO>", "jiro@example.com", // linked approvers are mentioned, others shown as text
 		`"verbatim":true`,
 	} {
@@ -78,7 +78,7 @@ func TestApprovalMessageThreadAndUpdate(t *testing.T) {
 		}
 	}
 	// The reason is plain text: no mention or link can be formed.
-	if !strings.Contains(blocks, `{"type":"plain_text","text":"<!channel> 問い合わせ#12 <https://evil.example|click> & fix"`) {
+	if !strings.Contains(blocks, `{"type":"plain_text","text":"<!channel> ticket#12 <https://evil.example|click> & fix"`) {
 		t.Errorf("reason is not plain text:\n%s", blocks)
 	}
 	if strings.Count(blocks, "<!channel>") != 1 || strings.Count(blocks, "evil.example") != 1 {
@@ -101,7 +101,7 @@ func TestApprovalMessageThreadAndUpdate(t *testing.T) {
 	if reply.Get("channel") != "CDBAPPROVALS" || reply.Get("thread_ts") != "1700000000.000001" {
 		t.Errorf("reply channel/thread = %q %q", reply.Get("channel"), reply.Get("thread_ts"))
 	}
-	if !strings.Contains(reply.Get("blocks"), "却下（hanako@example.com）") {
+	if !strings.Contains(reply.Get("blocks"), "Rejected (hanako@example.com)") {
 		t.Errorf("reply = %s", reply.Get("blocks"))
 	}
 	updates := fs.byMethod("chat.update")
@@ -113,7 +113,7 @@ func TestApprovalMessageThreadAndUpdate(t *testing.T) {
 		t.Errorf("update target = %q %q", up.Get("channel"), up.Get("ts"))
 	}
 	if strings.Contains(up.Get("blocks"), "dbgw_reject") || !strings.Contains(up.Get("blocks"), "dbgw_open") ||
-		!strings.Contains(up.Get("blocks"), "却下（hanako@example.com）") {
+		!strings.Contains(up.Get("blocks"), "Rejected (hanako@example.com)") {
 		t.Errorf("updated root = %s", up.Get("blocks"))
 	}
 	if opens := fs.byMethod("conversations.open"); len(opens) != 1 || opens[0].Form.Get("users") != "UTARO" {
@@ -146,7 +146,7 @@ func TestApprovalMessageThreadAndUpdate(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(posts[3].Form.Get("blocks"), "実行に失敗しました") {
+	if !strings.Contains(posts[3].Form.Get("blocks"), "The execution failed") {
 		t.Errorf("failure text missing: %s", posts[3].Form.Get("blocks"))
 	}
 	if s := d.Stats(); s.Failed != 0 || s.Published != 3 {
@@ -158,7 +158,7 @@ func TestEscapeAndSafeRendering(t *testing.T) {
 	if got := escape(`<@U1> & <!here> <https://x|y>`); got != "&lt;@U1&gt; &amp; &lt;!here&gt; &lt;https://x|y&gt;" {
 		t.Errorf("escape = %q", got)
 	}
-	m := newMsgs("ja")
+	m := newMsgs("en")
 	e := approvalEvent(events.QueryDenied, "deny")
 	e.Tables = []string{"<@UEVIL>"}
 	e.Principal.Agent = "<!channel>"

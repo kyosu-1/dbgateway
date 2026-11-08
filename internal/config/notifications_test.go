@@ -31,7 +31,7 @@ anomaly: { denials_per_10m: 5 }
 	if c.Anomaly.DenialsPer10m != 5 || c.Anomaly.RowsPerHour != DefaultRowsPerHour {
 		t.Errorf("anomaly = %+v", c.Anomaly)
 	}
-	if c.NotificationsLanguage != "ja" {
+	if c.NotificationsLanguage != "en" {
 		t.Errorf("language = %q", c.NotificationsLanguage)
 	}
 

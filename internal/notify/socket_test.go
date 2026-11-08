@@ -95,27 +95,27 @@ func TestRejectButton(t *testing.T) {
 		t.Errorf("reject call = %+v", c)
 	}
 	e := ephemerals()[0].Form
-	if e.Get("user") != "UHANAKO" || e.Get("channel") != "CDBAPPROVALS" || !strings.Contains(e.Get("text"), "却下しました") {
+	if e.Get("user") != "UHANAKO" || e.Get("channel") != "CDBAPPROVALS" || !strings.Contains(e.Get("text"), "Rejected request") {
 		t.Errorf("ephemeral = %v", e)
 	}
 
 	// Already decided.
 	rej.err = approval.ErrNotPending
 	d.HandleInteraction(ctx, rejectEvent("UHANAKO", "req_abc").Data.(slack.InteractionCallback))
-	if got := ephemerals()[1].Form.Get("text"); !strings.Contains(got, "すでに処理済み") {
+	if got := ephemerals()[1].Form.Get("text"); !strings.Contains(got, "already been decided") {
 		t.Errorf("not pending reply = %q", got)
 	}
 	// Not an approver (or invisible request).
 	for _, err := range []error{approval.ErrNotEligible, approval.ErrNotFound} {
 		rej.err = err
 		d.HandleInteraction(ctx, rejectEvent("UHANAKO", "req_abc").Data.(slack.InteractionCallback))
-		if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "権限がありません") {
+		if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "not allowed to reject") {
 			t.Errorf("%v reply = %q", err, got)
 		}
 	}
 	rej.err = approval.ErrSelfApproval
 	d.HandleInteraction(ctx, rejectEvent("UTARO", "req_abc").Data.(slack.InteractionCallback))
-	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "自分の申請") {
+	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "your own request") {
 		t.Errorf("self reply = %q", got)
 	}
 
@@ -125,7 +125,7 @@ func TestRejectButton(t *testing.T) {
 	if rej.n() != before {
 		t.Error("unlinked user reached Reject")
 	}
-	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "紐づいていません") {
+	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "not linked") {
 		t.Errorf("unlinked reply = %q", got)
 	}
 
@@ -139,7 +139,7 @@ func TestRejectButton(t *testing.T) {
 	if rej.n() != before {
 		t.Error("deactivated user reached Reject")
 	}
-	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "権限がありません") {
+	if got := ephemerals()[len(ephemerals())-1].Form.Get("text"); !strings.Contains(got, "not allowed to reject") {
 		t.Errorf("deactivated reply = %q", got)
 	}
 
@@ -179,7 +179,7 @@ func TestRejectButtonWithoutApprovals(t *testing.T) {
 	cfg := testConfig(config.NotificationRoute{Events: []string{"approval_requested"}, To: config.NotificationTarget{Slack: "#db-approvals"}})
 	d, _ := newSlackDispatcher(t, fs, cfg, nil)
 	d.HandleInteraction(context.Background(), rejectEvent("UHANAKO", "req_abc").Data.(slack.InteractionCallback))
-	if got := fs.byMethod("chat.postEphemeral"); len(got) != 1 || !strings.Contains(got[0].Form.Get("text"), "有効になっていません") {
+	if got := fs.byMethod("chat.postEphemeral"); len(got) != 1 || !strings.Contains(got[0].Form.Get("text"), "not enabled") {
 		t.Errorf("reply = %+v", got)
 	}
 }
@@ -240,11 +240,11 @@ func TestSlashCommandsAndLinking(t *testing.T) {
 	if !exp.Equal(now.Add(10*time.Minute)) || len(code) != 9 || code[4] != '-' {
 		t.Errorf("code = %q expires %v", code, exp)
 	}
-	if got := cmd("UTARO", "whoami"); !strings.Contains(got, "ありません") {
+	if got := cmd("UTARO", "whoami"); !strings.Contains(got, "No dbgateway account") {
 		t.Errorf("whoami before = %q", got)
 	}
 	// Codes are case- and separator-insensitive.
-	if got := cmd("UTARO", "link "+strings.ToLower(strings.ReplaceAll(code, "-", " "))); !strings.Contains(got, "taro@example.com と紐づけました") {
+	if got := cmd("UTARO", "link "+strings.ToLower(strings.ReplaceAll(code, "-", " "))); !strings.Contains(got, "Linked to the dbgateway account taro@example.com") {
 		t.Fatalf("link = %q", got)
 	}
 	if u, ok := l.Linked("taro@example.com"); !ok || u != "UTARO" {
@@ -254,40 +254,40 @@ func TestSlashCommandsAndLinking(t *testing.T) {
 		t.Errorf("whoami = %q", got)
 	}
 	// One-time.
-	if got := cmd("UOTHER", "link "+code); !strings.Contains(got, "正しくないか") {
+	if got := cmd("UOTHER", "link "+code); !strings.Contains(got, "wrong or has expired") {
 		t.Errorf("reused code = %q", got)
 	}
 	// Expiry.
 	code2, _, _ := l.IssueCode("hanako@example.com")
 	later := now.Add(11 * time.Minute)
 	clock = &later
-	if got := cmd("UHANAKO", "link "+code2); !strings.Contains(got, "期限が切れて") {
+	if got := cmd("UHANAKO", "link "+code2); !strings.Contains(got, "has expired") {
 		t.Errorf("expired code = %q", got)
 	}
 	// Issuing a new code invalidates the previous one.
 	code3, _, _ := l.IssueCode("hanako@example.com")
 	code4, _, _ := l.IssueCode("hanako@example.com")
-	if got := cmd("UHANAKO", "link "+code3); !strings.Contains(got, "正しくないか") {
+	if got := cmd("UHANAKO", "link "+code3); !strings.Contains(got, "wrong or has expired") {
 		t.Errorf("superseded code = %q", got)
 	}
 	// Too many wrong codes lock the Slack user out for a while.
 	for range 5 {
 		cmd("UHANAKO", "link AAAA-AAAA")
 	}
-	if got := cmd("UHANAKO", "link "+code4); !strings.Contains(got, "試行回数") {
+	if got := cmd("UHANAKO", "link "+code4); !strings.Contains(got, "Too many attempts") {
 		t.Errorf("rate limit = %q", got)
 	}
 	evenLater := later.Add(11 * time.Minute)
 	clock = &evenLater
 	code5, _, _ := l.IssueCode("hanako@example.com")
-	if got := cmd("UHANAKO", "link "+code5); !strings.Contains(got, "hanako@example.com と紐づけました") {
+	if got := cmd("UHANAKO", "link "+code5); !strings.Contains(got, "Linked to the dbgateway account hanako@example.com") {
 		t.Errorf("after lockout = %q", got)
 	}
 
-	if got := cmd("UTARO", "unlink"); !strings.Contains(got, "解除しました") {
+	if got := cmd("UTARO", "unlink"); !strings.Contains(got, "Unlinked from") {
 		t.Errorf("unlink = %q", got)
 	}
-	if got := cmd("UTARO", "unlink"); !strings.Contains(got, "ありません") {
+	if got := cmd("UTARO", "unlink"); !strings.Contains(got, "No dbgateway account") {
 		t.Errorf("unlink twice = %q", got)
 	}
 	if err := l.Unlink("hanako@example.com"); err != nil {
@@ -297,7 +297,7 @@ func TestSlashCommandsAndLinking(t *testing.T) {
 		t.Error("still linked after Unlink")
 	}
 	for _, text := range []string{"", "help", "link"} {
-		if got := cmd("UTARO", text); !strings.Contains(got, "使い方") {
+		if got := cmd("UTARO", text); !strings.Contains(got, "Usage:") {
 			t.Errorf("%q = %q", text, got)
 		}
 	}

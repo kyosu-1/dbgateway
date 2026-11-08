@@ -14,141 +14,141 @@ catalog:
       columns: [id, name, email]
 
 principals:
-  taro-agent: { kind: agent, human: taro@example.com, agent: claude-code, groups: [data-team] }
-  taro-agent-write: { kind: agent, human: taro@example.com, agent: claude-code, groups: [data-team], scopes: ["db:read", "db:write"] }
-  taro: { kind: human, human: taro@example.com, groups: [data-team] }
-  hanako: { kind: human, human: hanako@example.com, groups: [sre] }
-  jiro: { kind: human, human: jiro@example.com, groups: [] }   # personal querier binding on staging
+  alice-agent: { kind: agent, human: alice@example.com, agent: claude-code, groups: [data-team] }
+  alice-agent-write: { kind: agent, human: alice@example.com, agent: claude-code, groups: [data-team], scopes: ["db:read", "db:write"] }
+  alice: { kind: human, human: alice@example.com, groups: [data-team] }
+  bob: { kind: human, human: bob@example.com, groups: [sre] }
+  carol: { kind: human, human: carol@example.com, groups: [] }   # personal querier binding on staging
   outsider: { kind: human, human: eve@example.com, groups: [] }
 
 cases:
   - name: agent reads with public filter
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT id, email FROM users WHERE id = 42"
     expect: { decision: allow, rule: reads, masked: [email], visible: [id] }
 
   - name: masked column through view, alias and expression
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT c.email AS e, upper(c.name) AS n FROM user_contacts c WHERE c.id = 1"
     expect: { decision: allow, masked: [e, n] }
 
   - name: select star masks contact and secret columns
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT * FROM users WHERE id = 1"
     expect: { decision: allow, masked: [email, phone, api_token, name], visible: [id, plan, created_at] }
 
   - name: agent may not filter on a masked column
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT id FROM users WHERE email LIKE 'a%'"
     expect: { decision: deny, rule: "builtin:sensitive-predicate" }
 
   - name: agent may not order by a masked column
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT id FROM users ORDER BY email LIMIT 1"
     expect: { decision: deny, rule: "builtin:sensitive-predicate" }
 
   - name: human may filter on a masked column but still sees it masked
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "SELECT id, email FROM users WHERE email LIKE 'a%'"
     expect: { decision: allow, masked: [email] }
 
   - name: agents never see no_ai columns
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT body FROM support_tickets WHERE id = 1"
     expect: { decision: deny, rule: agents-never-see-no-ai }
 
   - name: humans see no_ai columns
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "SELECT body FROM support_tickets WHERE id = 1"
     expect: { decision: allow, visible: [body] }
 
   - name: aggregation over public columns
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "SELECT reason, count(*) FROM subscriptions WHERE status = 'churned' GROUP BY reason"
     expect: { decision: deny, rule: "builtin:sensitive-predicate" }  # reason is unclassified → masked for agents on prod
 
   - name: a human's small write needs one approver
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
     estimate: { rows: 1 }
     expect: { decision: approve, rule: writes, risk: medium, approval_rule: prod-default }
 
   - name: an agent's write on prod is high risk
-    principal: taro-agent-write
+    principal: alice-agent-write
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
     estimate: { rows: 1 }
     expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
 
   - name: an agent token without the write scope cannot request writes
-    principal: taro-agent
+    principal: alice-agent
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
     expect: { decision: deny, stage: role, rule: "role:writer" }
 
   - name: a large write is high risk
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE created_at < now()"
     estimate: { rows: 5000 }
     expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
 
   - name: writing a masked column is high risk
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "UPDATE users SET email = 'new@example.com' WHERE id = 1"
     estimate: { rows: 1 }
     expect: { decision: approve, risk: high, approval_rule: prod-high-risk }
 
   - name: an agent may not filter a write on a masked column
-    principal: taro-agent-write
+    principal: alice-agent-write
     database: prod-main
     sql: "UPDATE users SET plan = 'pro' WHERE email = 'a@example.com'"
     expect: { decision: deny, rule: "builtin:sensitive-predicate" }
 
   - name: staging writes use the non-prod rule
-    principal: hanako
+    principal: bob
     database: staging
     sql: "DELETE FROM subscriptions WHERE id = 1"
     estimate: { rows: 1 }
     expect: { decision: approve, risk: medium, approval_rule: non-prod }
 
   - name: querier without writer cannot request writes
-    principal: jiro
+    principal: carol
     database: staging
     sql: "DELETE FROM subscriptions WHERE id = 1"
     expect: { decision: deny, stage: role, rule: "role:writer" }
 
   - name: unbounded write
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "DELETE FROM users"
     expect: { decision: deny, rule: deny-unbounded-writes }
 
   - name: ddl
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "DROP TABLE users"
     expect: { decision: deny, rule: deny-ddl }
 
   - name: multiple statements are rejected at parse time
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "SELECT 1; DROP TABLE users"
     expect: { decision: deny, stage: parse, rule: "parse:multiple_statements" }
 
   - name: side-effect function
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "SELECT pg_catalog.pg_read_file('/etc/passwd')"
     expect: { decision: deny, stage: parse }
@@ -160,13 +160,13 @@ cases:
     expect: { decision: deny, stage: role }
 
   - name: data-team has no role on staging
-    principal: taro-agent
+    principal: alice-agent
     database: staging
     sql: "SELECT 1"
     expect: { decision: deny, stage: role }
 
   - name: unknown table is never auto-allowed
-    principal: taro
+    principal: alice
     database: prod-main
     sql: "SELECT * FROM not_in_catalog"
     expect: { decision: deny, rule: "builtin:unanalyzable" }

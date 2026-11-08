@@ -131,7 +131,7 @@ func testConfig(routes ...config.NotificationRoute) *config.Config {
 		NotificationSettings: config.NotificationSettings{
 			Slack:                 &config.SlackSettings{AppTokenEnv: "TEST_SLACK_APP", BotTokenEnv: "TEST_SLACK_BOT"},
 			Anomaly:               config.AnomalySettings{DenialsPer10m: 3, RowsPerHour: 1000},
-			NotificationsLanguage: "ja",
+			NotificationsLanguage: "en",
 		},
 		Groups: []config.Group{{Name: "dba", OIDCGroup: "idp-dba"}},
 	}

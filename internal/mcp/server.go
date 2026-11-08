@@ -269,9 +269,9 @@ func (h *handlers) getRequest(ctx context.Context, req *mcp.CallToolRequest, in 
 	out := &GetRequestOutput{Request: r}
 	switch r.Status {
 	case approval.StatusPending:
-		out.Hint = "承認待ちです。承認されるとdbgatewayが実行します。後でもう一度確認してください。"
+		out.Hint = "Pending approval. dbgateway runs it once it is approved. Check again later."
 	case approval.StatusApproved, approval.StatusRunning:
-		out.Hint = "承認済みで、実行待ちまたは実行中です。少し待ってから確認してください。"
+		out.Hint = "Approved; waiting to run or running. Wait a moment and check again."
 	case approval.StatusSucceeded:
 		out.Notice = gateway.DataNotice
 	}

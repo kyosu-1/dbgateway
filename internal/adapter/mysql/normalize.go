@@ -24,19 +24,19 @@ import (
 //     of them differently around "--" comments and whitespace.
 func checkText(sql string) *analysis.Rejection {
 	if !utf8.ValidString(sql) {
-		return analysis.Reject("invalid_text", "SQLに不正なUTF-8のバイト列が含まれています。", "SQLをUTF-8のテキストとして送ってください。")
+		return analysis.Reject("invalid_text", "The SQL contains invalid UTF-8 byte sequences.", "Send the SQL as UTF-8 text.")
 	}
 	for i := 0; i < len(sql); i++ {
 		c := sql[i]
 		if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0x7f {
-			return analysis.Reject("invalid_text", "SQLに制御文字が含まれています。", "改行・タブ以外の制御文字を取り除いてください。")
+			return analysis.Reject("invalid_text", "The SQL contains control characters.", "Remove control characters other than newlines and tabs.")
 		}
 	}
 	for _, p := range []struct{ seq, what string }{
-		{"/*!", "実行可能コメント（/*! ... */）"},
-		{"/*+", "オプティマイザヒント（/*+ ... */）"},
-		{"/*T!", "TiDB用の実行可能コメント（/*T! ... */）"},
-		{"/*M!", "MariaDB用の実行可能コメント（/*M! ... */）"},
+		{"/*!", "executable comments (/*! ... */)"},
+		{"/*+", "optimizer hints (/*+ ... */)"},
+		{"/*T!", "TiDB executable comments (/*T! ... */)"},
+		{"/*M!", "MariaDB executable comments (/*M! ... */)"},
 	} {
 		if strings.Contains(sql, p.seq) {
 			code := "executable_comment"
@@ -44,8 +44,8 @@ func checkText(sql string) *analysis.Rejection {
 				code = "optimizer_hint"
 			}
 			return analysis.Reject(code,
-				p.what+"を含むSQLは実行できません（解析結果と実際に実行される内容が食い違うおそれがあるため。文字列の中に書いた場合も含みます）。",
-				"コメントやヒントを外して、SQL本体だけを送ってください。")
+				"SQL containing "+p.what+" cannot be run, because what actually runs could differ from what was analyzed (this applies even inside string literals).",
+				"Remove the comments or hints and send only the SQL statement itself.")
 		}
 	}
 	return nil

@@ -1,4 +1,4 @@
-# dbgateway.yaml — production-style example (see docs/dbgateway-design.md).
+# dbgateway.yaml — production-style example (see docs/configuration.md).
 # Keep this file in Git and change it through pull requests.
 # Secrets are never written here; only the names of environment variables.
 
@@ -40,7 +40,7 @@ databases:
     primary:
       host: prod-main.example.internal
       dbname: app
-      auth: password            # aws_iam is planned (phase 3)
+      auth: password            # password | aws_iam | gcp_iam
       read_user: dbgw_reader    # GRANT SELECT only
       password_env: DBGW_PROD_MAIN_READER_PASSWORD
       write_user: dbgw_writer   # GRANT SELECT, INSERT, UPDATE, DELETE (no DDL); runs approved writes only
@@ -80,7 +80,7 @@ role_bindings:
   - group: sre
     databases: "*"
     roles: [querier, writer, approver]
-  - user: jiro@example.com      # a temporary, personal grant (JIT)
+  - user: carol@example.com      # a temporary, personal grant (JIT)
     databases: [staging]
     roles: [querier]
     expires_at: 2026-12-31T00:00:00Z
@@ -118,7 +118,7 @@ approval_rules:                 # top to bottom, first match wins; approve witho
     max_affected_rows: 10000    # overrides the estimate-based limit
 
 unmask:                         # humans only; never applies to agents
-  - user: hanako@example.com
+  - user: bob@example.com
     databases: [prod-main]
     expires_at: 2026-11-30T00:00:00Z
 
@@ -156,17 +156,17 @@ policies:                       # top to bottom, first match wins; no match = de
   - name: deny-ddl
     when: stmt.kind == "ddl"
     action: deny
-    message: "DDLはdbgatewayでは実行しません。"
-    hint: "マイグレーションファイルを作成し、PRでレビューを受けて適用してください。"
+    message: "dbgateway does not run DDL."
+    hint: "Write a migration file, get it reviewed in a PR, and apply it."
   - name: deny-unbounded-writes
-    when: stmt.is_write && !stmt.has_where
+    when: stmt.kind in ["update", "delete"] && !stmt.has_where
     action: deny
-    hint: "WHEREがありません。対象を絞って再実行してください。"
+    hint: "There is no WHERE clause. Narrow down the target rows and run it again."
   - name: agents-never-see-no-ai
     when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
     action: deny
-    message: "AIに送らない区分（no_ai）の列を参照しています。"
-    hint: "この列を除いて再実行してください。"
+    message: "The query references a column classified as no_ai, which is never sent to AI agents."
+    hint: "Remove this column and run it again."
   - name: reads
     when: stmt.kind == "select" && !stmt.is_write
     action: allow

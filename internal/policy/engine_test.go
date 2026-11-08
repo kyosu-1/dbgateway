@@ -87,7 +87,7 @@ policies:
   - name: agents-never-see-no-ai
     when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
     action: deny
-    message: "AIに送らない列です"
+    message: "This column is not sent to AI agents"
   - name: big-reads
     when: database.labels.env == "staging" && estimate.rows > 1000000
     action: deny

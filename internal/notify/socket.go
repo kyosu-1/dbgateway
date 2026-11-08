@@ -19,7 +19,7 @@ import (
 const SlackCommand = "/dbgw"
 
 // RejectComment is the comment recorded for rejections from Slack.
-const RejectComment = "Slackから却下"
+const RejectComment = "Rejected from Slack"
 
 // Run serves Slack interactions (the reject button and /dbgw) over Socket
 // Mode until ctx is cancelled, reconnecting with backoff. It returns nil

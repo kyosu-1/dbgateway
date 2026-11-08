@@ -64,10 +64,19 @@ func newParserPool(mode pmysql.SQLMode) *parserPool {
 	return pp
 }
 
-func (pp *parserPool) parse(sql string) ([]ast.StmtNode, error) {
+// parse parses sql. The parser's lightweight value driver panics on some
+// inputs (e.g. integer literals too long for its decimal type); such a
+// statement is reported as unparsable and the parser is discarded.
+func (pp *parserPool) parse(sql string) (stmts []ast.StmtNode, err error) {
 	p := pp.pool.Get().(*parser.Parser)
-	defer pp.pool.Put(p)
-	stmts, _, err := p.ParseSQL(sql)
+	defer func() {
+		if r := recover(); r != nil {
+			stmts, err = nil, fmt.Errorf("parser failed: %v", r)
+			return
+		}
+		pp.pool.Put(p)
+	}()
+	stmts, _, err = p.ParseSQL(sql)
 	return stmts, err
 }
 
@@ -93,7 +102,7 @@ func NewAnalyzer(funcs *FunctionAllowlist) *Analyzer {
 // Analyze parses and analyzes a single SQL statement.
 func (a *Analyzer) Analyze(_ context.Context, sql string, cat *analysis.Catalog) (*analysis.QueryAnalysis, error) {
 	if strings.TrimSpace(sql) == "" {
-		return nil, analysis.Reject("empty", "SQLが空です。", "実行するSQLを1文だけ指定してください。")
+		return nil, analysis.Reject("empty", "The SQL is empty.", "Specify exactly one SQL statement to run.")
 	}
 	if rej := checkText(sql); rej != nil {
 		return nil, rej
@@ -101,17 +110,17 @@ func (a *Analyzer) Analyze(_ context.Context, sql string, cat *analysis.Catalog)
 	stmts, err := sessionParsers.parse(sql)
 	if err != nil {
 		return nil, analysis.Reject("parse_error",
-			fmt.Sprintf("SQLを解析できませんでした（%s）。解析できないSQLは安全のため実行しません。", parseErrorText(err)),
-			"MySQLの構文として正しいか確認して、1文だけを送ってください。文字列は '...'、識別子は \"...\" か `...` で囲みます（sql_mode に ANSI_QUOTES を設定しています）。")
+			fmt.Sprintf("Could not parse the SQL (%s). SQL that cannot be parsed is not run, for safety.", parseErrorText(err)),
+			"Check that it is valid MySQL syntax and send a single statement. Quote strings with '...' and identifiers with \"...\" or `...` (sql_mode includes ANSI_QUOTES).")
 	}
 	switch len(stmts) {
 	case 0:
-		return nil, analysis.Reject("empty", "SQLに文が含まれていません。", "実行するSQLを1文だけ指定してください。")
+		return nil, analysis.Reject("empty", "The SQL contains no statement.", "Specify exactly one SQL statement to run.")
 	case 1:
 	default:
 		return nil, analysis.Reject("multiple_statements",
-			fmt.Sprintf("%d個の文が含まれています。複数の文をまとめて送ることはできません。", len(stmts)),
-			"セミコロンで区切らず、1回の呼び出しで1文だけを送ってください。")
+			fmt.Sprintf("The SQL contains %d statements. Multiple statements cannot be sent together.", len(stmts)),
+			"Send exactly one statement per call; do not separate statements with semicolons.")
 	}
 	stmt := stmts[0]
 
@@ -188,39 +197,39 @@ func classify(n ast.StmtNode) (analysis.StmtKind, *analysis.Rejection) {
 		return analysis.KindTruncate, nil
 	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt:
 		return "", analysis.Reject("transaction_control",
-			"トランザクション制御（BEGIN / START TRANSACTION / COMMIT / ROLLBACK / SAVEPOINTなど）は実行できません。",
-			"トランザクションはdbgatewayが管理します。SQL本体だけを送ってください。")
+			"Transaction control (BEGIN / START TRANSACTION / COMMIT / ROLLBACK / SAVEPOINT, etc.) is not allowed.",
+			"dbgateway manages transactions. Send only the SQL statement itself.")
 	case *ast.SetStmt, *ast.SetRoleStmt, *ast.SetPwdStmt, *ast.SetConfigStmt, *ast.SetResourceGroupStmt,
 		*ast.SetSessionStatesStmt, *ast.SetBindingStmt:
 		return "", analysis.Reject("set",
-			"SET（変数・ロール・パスワード・トランザクション特性など）は実行できません。",
-			"セッション設定はdbgatewayが固定しています。設定を変えずにSQL本体だけを送ってください。")
+			"SET (variables, roles, passwords, transaction characteristics, etc.) is not allowed.",
+			"dbgateway fixes the session settings. Send only the SQL statement itself, without changing settings.")
 	case *ast.ShowStmt:
-		return "", analysis.Reject("show", "SHOW は実行できません。",
-			"表や列を調べるには search_objects を使ってください。")
+		return "", analysis.Reject("show", "SHOW is not allowed.",
+			"Use search_objects to look up tables and columns.")
 	case *ast.ExplainStmt:
 		if x.Analyze {
-			return "", analysis.Reject("explain_analyze", "EXPLAIN ANALYZE は文を実際に実行するため実行できません。", "ANALYZEを外すか、SELECT文そのものを送ってください。")
+			return "", analysis.Reject("explain_analyze", "EXPLAIN ANALYZE is not allowed because it actually runs the statement.", "Remove ANALYZE, or send the SELECT statement itself.")
 		}
-		return "", analysis.Reject("explain", "EXPLAIN / DESCRIBE は execute_sql では実行できません。",
-			"SELECT文そのものを送ってください。見積もり行数はdbgatewayが自動で確認します。表の定義は search_objects で確認できます。")
+		return "", analysis.Reject("explain", "EXPLAIN / DESCRIBE cannot be run with execute_sql.",
+			"Send the SELECT statement itself; dbgateway checks the estimated rows automatically. Use search_objects to see table definitions.")
 	case *ast.LoadDataStmt, *ast.ImportIntoStmt:
-		return "", analysis.Reject("load_data", "LOAD DATA / IMPORT INTO は実行できません（サーバーやクライアントのファイルへのアクセスを防ぐため）。", "INSERT文で必要な行だけを書いてください（承認が必要です）。")
+		return "", analysis.Reject("load_data", "LOAD DATA / IMPORT INTO is not allowed (this prevents access to files on the server or client).", "Write an INSERT statement with only the rows you need (requires approval).")
 	case *ast.CallStmt:
-		return "", analysis.Reject("call", "CALL（プロシージャの呼び出し）は実行できません。", "SELECT文で必要なデータを取得してください。")
+		return "", analysis.Reject("call", "CALL (calling a procedure) is not allowed.", "Fetch the data you need with a SELECT statement.")
 	case *ast.DoStmt:
-		return "", analysis.Reject("do", "DO は実行できません。", "SELECT文で表現してください。")
+		return "", analysis.Reject("do", "DO is not allowed.", "Express it as a SELECT statement.")
 	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
-		return "", analysis.Reject("lock", "LOCK TABLES / UNLOCK TABLES は実行できません。", "ロックを取らずにSELECT文を送ってください。")
+		return "", analysis.Reject("lock", "LOCK TABLES / UNLOCK TABLES is not allowed.", "Send a SELECT statement without taking locks.")
 	case *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
-		return "", analysis.Reject("prepare", "PREPARE / EXECUTE / DEALLOCATE は実行できません。", "SQL本体を直接送ってください。")
+		return "", analysis.Reject("prepare", "PREPARE / EXECUTE / DEALLOCATE is not allowed.", "Send the SQL statement itself directly.")
 	case *ast.UseStmt:
-		return "", analysis.Reject("use", "USE（既定のデータベースの変更）は実行できません。", "表名をデータベース名で修飾して書いてください（例: app.users）。")
+		return "", analysis.Reject("use", "USE (changing the default database) is not allowed.", "Qualify table names with the database name (e.g. app.users).")
 	case *ast.KillStmt:
-		return "", analysis.Reject("kill", "KILL は実行できません。", "接続やクエリの停止は管理者に依頼してください。")
+		return "", analysis.Reject("kill", "KILL is not allowed.", "Ask an administrator to stop connections or queries.")
 	case *ast.FlushStmt, *ast.ShutdownStmt, *ast.RestartStmt, *ast.AdminStmt, *ast.BinlogStmt,
 		*ast.HelpStmt, *ast.TrafficStmt:
-		return "", analysis.Reject("utility", "この種類のユーティリティ文は実行できません。", "SELECT文を送ってください。")
+		return "", analysis.Reject("utility", "This kind of utility statement is not allowed.", "Send a SELECT statement.")
 	case *ast.GrantStmt, *ast.RevokeStmt, *ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.GrantProxyStmt,
 		*ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.SetDefaultRoleStmt,
 		*ast.AnalyzeTableStmt, *ast.OptimizeTableStmt:
@@ -229,8 +238,8 @@ func classify(n ast.StmtNode) (analysis.StmtKind, *analysis.Rejection) {
 		return analysis.KindDDL, nil
 	}
 	return "", analysis.Reject("unsupported_statement",
-		fmt.Sprintf("この種類の文（%s）は判定できないため実行しません。", stmtName(n)),
-		"SELECT文で表現してください。")
+		fmt.Sprintf("This kind of statement (%s) cannot be evaluated, so it is not run.", stmtName(n)),
+		"Express it as a SELECT statement.")
 }
 
 func stmtName(n ast.Node) string {

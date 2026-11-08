@@ -150,8 +150,8 @@ func TestConfigChanged(t *testing.T) {
 	if e.Type != events.ConfigChanged || e.Detail["previous_version"] != "v1" || e.Detail["version"] != "v2" {
 		t.Errorf("event = %+v", e)
 	}
-	blocks := newMsgs("ja").blocks(e, renderOpts{})
-	if s := blockJSON(t, blocks); !strings.Contains(s, "v1 → v2") || !strings.Contains(s, "設定が変わりました") {
+	blocks := newMsgs("en").blocks(e, renderOpts{})
+	if s := blockJSON(t, blocks); !strings.Contains(s, "v1 → v2") || !strings.Contains(s, "Configuration changed") {
 		t.Errorf("blocks = %s", s)
 	}
 }

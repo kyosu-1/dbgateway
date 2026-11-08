@@ -381,8 +381,8 @@ func TestCancelAndReject(t *testing.T) {
 	if _, err := e.svc.Reject(ctx, hanakoAgnt, id, "no"); !errors.Is(err, ErrAgent) {
 		t.Fatalf("agent reject: %v", err)
 	}
-	r, err = e.svc.Reject(ctx, ken, id, "対象が広すぎます")
-	if err != nil || r.Status != StatusRejected || r.DecidedBy != "ken@example.com" || r.Comment != "対象が広すぎます" {
+	r, err = e.svc.Reject(ctx, ken, id, "The scope is too broad")
+	if err != nil || r.Status != StatusRejected || r.DecidedBy != "ken@example.com" || r.Comment != "The scope is too broad" {
 		t.Fatalf("reject: %+v %v", r, err)
 	}
 	if _, err := e.svc.Cancel(ctx, taroAgent, id); !errors.Is(err, ErrNotPending) {
@@ -457,7 +457,7 @@ func TestBindingHashMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := e.get(id)
-	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "固定ハッシュ") {
+	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "binding hash") {
 		t.Fatalf("tampered after approval: %+v %+v", r, r.Result)
 	}
 	if len(e.fa.Writes()) != 0 {
@@ -484,13 +484,13 @@ func TestDecisionChangedBeforeExecution(t *testing.T) {
 
 	// The policy now denies writes to users.
 	e.build(strings.Replace(testYAML, "risk:", `policies:
-  - { name: freeze, when: 'stmt.is_write', action: deny, message: "変更凍結中です" }
+  - { name: freeze, when: 'stmt.is_write', action: deny, message: "Change freeze in effect" }
 risk:`, 1))
 	if _, err := e.svc.Approve(ctx, hanako, id, e.stepUp()); err != nil {
 		t.Fatal(err)
 	}
 	r := e.get(id)
-	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "判定が変わった") || !strings.Contains(r.Result.Error, "freeze") {
+	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "decision has changed") || !strings.Contains(r.Result.Error, "freeze") {
 		t.Fatalf("policy change: %+v %+v", r, r.Result)
 	}
 
@@ -530,7 +530,7 @@ func TestMaxAffectedRowsRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := e.get(id)
-	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "5行") || !strings.Contains(r.Result.Error, "2行") {
+	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "5 rows") || !strings.Contains(r.Result.Error, "2 rows") {
 		t.Fatalf("got %+v %+v", r, r.Result)
 	}
 }
@@ -578,7 +578,7 @@ func TestBreakGlass(t *testing.T) {
 	// Policy and affected-row limits still apply.
 	e.fa.Set(func(a *gatewaytest.Adapter) { a.Affected = 50 })
 	r = e.gw.ExecuteSQL(ctx, hanako, gateway.ExecuteRequest{Database: "prod", SQL: update, Reason: "incident #1: fix plan"})
-	if r.Status != gateway.StatusError || !strings.Contains(r.Reason, "ロールバック") {
+	if r.Status != gateway.StatusError || !strings.Contains(r.Reason, "Rolled back") {
 		t.Fatalf("break-glass limit: %+v", r)
 	}
 	if r := e.gw.ExecuteSQL(ctx, hanako, gateway.ExecuteRequest{Database: "prod", SQL: "DROP TABLE users", Reason: "incident #1: fix plan"}); r.Status != gateway.StatusDenied {
@@ -618,7 +618,7 @@ func TestStaleRunningMarkedFailed(t *testing.T) {
 	e.clock.Add(5 * time.Minute)
 	e.svc.Sweep(ctx)
 	r := e.get(id)
-	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "結果は不明") {
+	if r.Status != StatusFailed || !strings.Contains(r.Result.Error, "result is unknown") {
 		t.Fatalf("stale: %+v %+v", r, r.Result)
 	}
 	if ts.calls != 0 {

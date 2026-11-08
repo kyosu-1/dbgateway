@@ -75,7 +75,7 @@ type NotificationSettings struct {
 	Slack   *SlackSettings  `yaml:"slack"`
 	Anomaly AnomalySettings `yaml:"anomaly"`
 	// NotificationsLanguage is the language of notification messages:
-	// "ja" (default) or "en".
+	// "en" (default) or "ja".
 	NotificationsLanguage string `yaml:"notifications_language"`
 	// NotificationsWebhookSecretEnv names the environment variable holding
 	// the HMAC-SHA256 key that signs webhook bodies (X-Dbgw-Signature).
@@ -168,7 +168,7 @@ func (c *Config) validateNotifications(add func(string, ...any)) {
 	}
 	switch c.NotificationsLanguage {
 	case "":
-		c.NotificationsLanguage = "ja"
+		c.NotificationsLanguage = "en"
 	case "ja", "en":
 	default:
 		add("notifications_language: must be \"ja\" or \"en\"")

@@ -24,11 +24,11 @@ func (a *Analyzer) scan(root *pg.Node, st *analysis.Statement) *analysis.Rejecti
 		}
 		switch x := m.(type) {
 		case *pg.IntoClause:
-			rej = analysis.Reject("select_into", "SELECT ... INTO は表を作成するため実行できません。", "INTO句を外したSELECT文を送ってください。")
+			rej = analysis.Reject("select_into", "SELECT ... INTO is not allowed because it creates a table.", "Send the SELECT statement without the INTO clause.")
 		case *pg.LockingClause:
-			rej = analysis.Reject("locking_clause", "FOR UPDATE / FOR SHARE は行ロックを取るため実行できません。", "ロック句を外したSELECT文を送ってください。")
+			rej = analysis.Reject("locking_clause", "FOR UPDATE / FOR SHARE is not allowed because it takes row locks.", "Send the SELECT statement without the locking clause.")
 		case *pg.ParamRef:
-			rej = analysis.Reject("parameters", "パラメータ（$1など）を含むSQLは実行できません。", "値をSQLに直接書いてください（値は監査ログでは伏せられます）。")
+			rej = analysis.Reject("parameters", "SQL with parameters ($1, etc.) cannot be run.", "Write the values directly in the SQL (values are redacted in the audit log).")
 		case *pg.InsertStmt, *pg.UpdateStmt, *pg.DeleteStmt, *pg.MergeStmt:
 			if m != top {
 				st.IsWrite = true
@@ -40,8 +40,8 @@ func (a *Analyzer) scan(root *pg.Node, st *analysis.Statement) *analysis.Rejecti
 			}
 			if !a.funcs.Allowed(x.Funcname) {
 				rej = analysis.Reject("function_not_allowed",
-					fmt.Sprintf("関数 %s は許可リストにないため実行できません（副作用のある関数を防ぐため）。", name),
-					"この関数を使わずに書き直すか、必要なら管理者に sql.allowed_functions への追加を依頼してください。")
+					fmt.Sprintf("Function %s is not on the allow list, so it cannot be run (this prevents functions with side effects).", name),
+					"Rewrite the query without this function, or if it is needed, ask an administrator to add it to sql.allowed_functions.")
 			}
 		}
 		return true

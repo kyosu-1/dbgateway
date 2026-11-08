@@ -62,7 +62,7 @@
 // audit entry is written (no audit, no write), and the gateway
 // re-evaluates the requester's role (writer) and the policy with the
 // current configuration; if the decision is no longer approve under the
-// same approval rule the request fails ("判定が変わったため実行しない").
+// same approval rule the request fails ("not executed because the decision has changed").
 // The write runs in a read-write transaction and is rolled back if it
 // affects more rows than the limit shown to approvers. RETURNING rows are
 // masked like read results for the requester and stored with the result.

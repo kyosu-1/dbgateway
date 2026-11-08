@@ -88,7 +88,7 @@ func tableList(p *i18n.Printer, tables []string) string {
 	return strings.Join(short, p.T("list.separator"))
 }
 
-// rowsPhrase is "1行" / "3 rows"; empty when the count is unknown.
+// rowsPhrase is "1 row" / "3 rows"; empty when the count is unknown.
 func rowsPhrase(p *i18n.Printer, rows float64) string {
 	n := int64(math.Ceil(rows))
 	switch {
@@ -100,7 +100,7 @@ func rowsPhrase(p *i18n.Printer, rows float64) string {
 	return p.T("rows.other", n)
 }
 
-// requestTitle summarizes a write: "subscriptions の1行を更新".
+// requestTitle summarizes a write: "Update 1 row in subscriptions".
 func requestTitle(p *i18n.Printer, kind string, tables []string, estimate float64) string {
 	switch kind {
 	case "update", "delete", "insert", "merge":
@@ -116,8 +116,8 @@ func requestTitle(p *i18n.Printer, kind string, tables []string, estimate float6
 	return p.T("req.title."+kind, tableList(p, tables), rows)
 }
 
-// requesterLabel is "claude-code · taro@example.com の代理", "SQLコンソール ·
-// kenji@example.com" or the e-mail.
+// requesterLabel is "claude-code · on behalf of taro@example.com",
+// "SQL console · kenji@example.com" or the e-mail.
 func requesterLabel(p *i18n.Printer, req approval.Requester) string {
 	switch {
 	case req.Kind == identity.KindAgent:
@@ -131,7 +131,7 @@ func requesterLabel(p *i18n.Printer, req approval.Requester) string {
 }
 
 // sourceLabel is the requester's channel for the requester's own list:
-// the agent name, "SQLコンソール", "dbgw CLI" or "".
+// the agent name, "SQL console", "dbgw CLI" or "".
 func sourceLabel(p *i18n.Printer, req approval.Requester) string {
 	switch {
 	case req.Kind == identity.KindAgent:
@@ -144,7 +144,7 @@ func sourceLabel(p *i18n.Printer, req approval.Requester) string {
 	return ""
 }
 
-// timeLeft is "残り 1時間36分" for a pending request.
+// timeLeft is "1h 36m left" for a pending request.
 func timeLeft(p *i18n.Printer, expires, now time.Time) string {
 	d := expires.Sub(now)
 	if d <= 0 {
@@ -217,7 +217,7 @@ func formatValue(v any) cell {
 	return cell{Text: ui.InertText(s)}
 }
 
-// stepLabel describes an approval step: "approver ロールの1人".
+// stepLabel describes an approval step: "1 with the approver role".
 func stepLabel(p *i18n.Printer, st approval.Step) string {
 	if st.Group != "" {
 		return p.T("step.group", st.Group, st.Count)

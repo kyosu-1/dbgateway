@@ -259,7 +259,7 @@ func TestAffectedRowsLimitRollsBack(t *testing.T) {
 		t.Fatalf("submit: %+v", resp)
 	}
 	r := h.approve(t, resp.RequestID)
-	if r.Status != approval.StatusFailed || !strings.Contains(r.Result.Error, "ロールバック") {
+	if r.Status != approval.StatusFailed || !strings.Contains(r.Result.Error, "Rolled back") {
 		t.Fatalf("result: %+v %+v", r, r.Result)
 	}
 	if n := len(plans(t, su)); n != 20 {

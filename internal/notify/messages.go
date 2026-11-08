@@ -8,8 +8,8 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/events"
 )
 
-// catalog holds the message texts. Japanese is the default; English is
-// selected with notifications_language: en. Both maps must have the same
+// catalog holds the message texts. English is the default; Japanese is
+// selected with notifications_language: ja. Both maps must have the same
 // keys (see TestCatalogParity).
 var catalog = map[string]map[string]string{
 	"ja": {
@@ -169,13 +169,13 @@ func newMsgs(lang string) msgs {
 	if m, ok := catalog[lang]; ok {
 		return msgs{m}
 	}
-	return msgs{catalog["ja"]}
+	return msgs{catalog["en"]}
 }
 
 func (m msgs) t(key string, args ...any) string {
 	s, ok := m.m[key]
 	if !ok {
-		s = catalog["ja"][key]
+		s = catalog["en"][key]
 	}
 	if len(args) == 0 {
 		return s
@@ -216,7 +216,7 @@ func (m msgs) risk(r string) string {
 	return r
 }
 
-// requester renders the requester: the human, or "agent · human の代理".
+// requester renders the requester: the human, or "agent on behalf of human".
 func (m msgs) requester(p *events.Principal) string {
 	if p == nil {
 		return ""

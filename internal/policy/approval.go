@@ -84,15 +84,15 @@ func (e *Engine) approve(in Input, d Decision) Decision {
 	case d.Action != config.ActionApprove:
 		// An allow rule can never match a write (checked at compile time);
 		// keep a guard anyway.
-		return deny(RuleWriteGuard, "書き込みは承認を経ずには実行できません。", "管理者にポリシーの確認を依頼してください。")
+		return deny(RuleWriteGuard, "Writes cannot run without approval.", "Ask an administrator to review the policy.")
 	case !in.Stmt.IsWrite:
 		return deny(RuleApproveNotWrite,
-			fmt.Sprintf("ポリシー %q は承認を求めていますが、承認して実行できるのは書き込み（INSERT / UPDATE / DELETE / MERGE）だけです。", d.Rule),
-			"読み取りであれば条件を絞って再実行してください。DDLはマイグレーションファイルとPRで適用してください。")
+			fmt.Sprintf("Policy %q requires approval, but only writes (INSERT / UPDATE / DELETE / MERGE) can be approved and run.", d.Rule),
+			"If this is a read, narrow the conditions and run it again. Apply DDL with a migration file and a PR.")
 	case in.Stmt.Kind == string(analysis.KindTruncate):
 		return deny(RuleTruncate,
-			"TRUNCATE は影響行数を確認できないため、承認を経ても実行しません。",
-			"DELETE ... WHERE で対象を絞って申請してください。")
+			"TRUNCATE is not run even with approval, because its affected rows cannot be checked.",
+			"Request a DELETE ... WHERE that narrows down the target rows instead.")
 	}
 	if g := commonGuards(in); g != nil {
 		return *g
@@ -104,8 +104,8 @@ func (e *Engine) approve(in Input, d Decision) Decision {
 			// Falling through to a later (possibly weaker) rule would be
 			// fail-open, so an unevaluable rule denies.
 			return deny(RuleApprovalRuleError,
-				fmt.Sprintf("承認ルール %q の条件を評価できなかったため拒否しました（%v）。", ar.rule.Name, err),
-				"管理者に承認ルールの条件の確認を依頼してください（ラベルがない接続先では `\"env\" in database.labels && ...` のように書きます）。")
+				fmt.Sprintf("Denied because the condition of approval rule %q could not be evaluated (%v).", ar.rule.Name, err),
+				"Ask an administrator to check the approval rule's condition (for databases that may lack the label, write `\"env\" in database.labels && ...`).")
 		}
 		if out == types.True {
 			d.ApprovalRule = ar.rule
@@ -113,6 +113,6 @@ func (e *Engine) approve(in Input, d Decision) Decision {
 		}
 	}
 	return deny(RuleNoApprovalRoute,
-		"この書き込みには承認が必要ですが、一致する承認ルールがありません（承認経路がない）。",
-		"管理者に承認ルール（approval_rules）の追加を依頼してください。")
+		"This write needs approval, but no approval rule matches (there is no approval route).",
+		"Ask an administrator to add an approval rule (approval_rules).")
 }

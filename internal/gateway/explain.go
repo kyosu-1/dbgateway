@@ -125,7 +125,7 @@ func (g *Gateway) ExplainPolicy(ctx context.Context, p *identity.Principal, req 
 		resp.MaxAffectedRows = g.cfg.MaxAffectedRows(rule, ev.EstimateRows())
 		if g.approvals == nil {
 			resp.Decision, resp.Rule = config.ActionDeny, "builtin:approval-unavailable"
-			resp.Reason, resp.Hint = "承認サービスが利用できないため、書き込みを受け付けられません。", "管理者に問い合わせてください。"
+			resp.Reason, resp.Hint = "Writes cannot be accepted because the approval service is unavailable.", "Contact an administrator."
 		} else {
 			if approvers, err := g.approvals.CandidateApprovers(ctx, p, d.cfg, rule); err == nil {
 				resp.Approvers = approvers

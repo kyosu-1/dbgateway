@@ -33,20 +33,20 @@ func (s *Service) execute(ctx context.Context, id string) bool {
 	r, err := s.load(ctx, id)
 	if err != nil {
 		s.logger.Error("load claimed request failed", "err", err, "request_id", id)
-		s.finishFailed(ctx, &Request{ID: id, Status: StatusRunning}, "リクエストを読み込めなかったため実行しません。")
+		s.finishFailed(ctx, &Request{ID: id, Status: StatusRunning}, "Not executed because the request could not be loaded.")
 		return true
 	}
 	if r.computeHash() != r.bindingHash {
-		s.finishFailed(ctx, r, "固定ハッシュが一致しないため実行しません（申請後に内容が変更された可能性があります）。")
+		s.finishFailed(ctx, r, "Not executed because the binding hash does not match (the request may have been changed after it was submitted).")
 		return true
 	}
 	if err := s.writeAudit(r, "running", "dbgateway", nil, nil); err != nil {
-		s.finishFailed(ctx, r, "監査ログに書き込めないため実行しません。")
+		s.finishFailed(ctx, r, "Not executed because the audit log could not be written.")
 		return true
 	}
 	p, err := s.requesterPrincipal(ctx, r)
 	if err != nil {
-		s.finishFailed(ctx, r, "申請者の権限を確認できないため実行しません。")
+		s.finishFailed(ctx, r, "Not executed because the requester's permissions could not be verified.")
 		return true
 	}
 
@@ -167,7 +167,7 @@ func (s *Service) Sweep(ctx context.Context) {
 		}
 		// The process stopped mid-execution: the outcome is unknown and
 		// the write must never run again.
-		s.finish(ctx, r, StatusFailed, &Result{Error: "実行中にdbgatewayが停止したため、結果は不明です。データベースを確認してください。"}, nil)
+		s.finish(ctx, r, StatusFailed, &Result{Error: "dbgateway stopped during the execution, so the result is unknown. Check the database."}, nil)
 	}
 
 	approved, err := s.st.ListApprovalRequests(ctx, store.ApprovalFilter{Statuses: []Status{StatusApproved}, Limit: scanLimit})

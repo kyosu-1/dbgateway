@@ -77,8 +77,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 	ev := &Evaluation{}
 	if !e.RBAC.Has(p, db, identity.RoleQuerier) {
 		ev.Decision = deny(analysis.StageRole, "role:querier",
-			fmt.Sprintf("接続先 %s でクエリを実行する権限（querier）がありません。", db.Name),
-			"list_databases で使える接続先を確認してください。権限が必要な場合は、管理者にロールの割り当てを依頼してください。")
+			fmt.Sprintf("You do not have permission (querier role) to run queries on database %s.", db.Name),
+			"Use list_databases to see the databases you can use. If you need access, ask an administrator to assign you a role.")
 		return ev
 	}
 
@@ -87,7 +87,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 		if r, ok := analysis.AsRejection(err); ok {
 			ev.Decision = deny(analysis.StageParse, "parse:"+r.Code, r.Reason, r.Hint)
 		} else {
-			ev.Decision = deny(analysis.StageParse, "parse:error", "SQLを解析できませんでした。", "1文のSQLとして正しいか確認してください。")
+			ev.Decision = deny(analysis.StageParse, "parse:error", "Could not parse the SQL.", "Check that it is a single valid SQL statement.")
 		}
 		return ev
 	}
@@ -98,18 +98,18 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 	approvals := e.Config.Approvals.Enabled
 	if st.IsWrite && approvals {
 		if !e.RBAC.Has(p, db, identity.RoleWriter) {
-			hint := "書き込みが必要な場合は、管理者に writer ロールの割り当てを依頼してください。"
+			hint := "If you need to write, ask an administrator to assign you the writer role."
 			if p.IsAgent() {
-				hint = "エージェントのトークンに書き込みのスコープ（" + identity.ScopeWrite + "）がないか、代理元の人に writer ロールがありません。書き込みが必要な場合は、人に依頼してください。"
+				hint = "The agent token lacks the write scope (" + identity.ScopeWrite + "), or the person it acts for lacks the writer role. If a write is needed, ask a person to request it."
 			}
 			ev.Decision = deny(analysis.StageRole, "role:writer",
-				fmt.Sprintf("接続先 %s で書き込みを申請する権限（writer）がありません。", db.Name), hint)
+				fmt.Sprintf("You do not have permission (writer role) to request writes on database %s.", db.Name), hint)
 			return ev
 		}
 		if db.Primary.WriteUser == "" {
 			ev.Decision = deny(analysis.StagePolicy, "builtin:no-write-user",
-				fmt.Sprintf("接続先 %s には書き込み用のユーザーが設定されていないため、書き込みはできません。", db.Name),
-				"管理者に問い合わせてください。")
+				fmt.Sprintf("Database %s has no write user configured, so writes are not possible.", db.Name),
+				"Contact an administrator.")
 			return ev
 		}
 	}
@@ -129,8 +129,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 		est, err := estimate(ctx, st.IsWrite)
 		if err != nil {
 			ev.Decision = deny(analysis.StagePolicy, "builtin:estimate-failed",
-				fmt.Sprintf("実行計画の見積もり（EXPLAIN）に失敗したため、安全のため実行しません（%s）。", sanitizeDBError(err)),
-				"SQLが正しいか確認してください。")
+				fmt.Sprintf("The row estimate (EXPLAIN) failed, so the statement was not run, for safety (%s).", sanitizeDBError(err)),
+				"Check that the SQL is correct.")
 			return ev
 		}
 		ev.Estimate = est

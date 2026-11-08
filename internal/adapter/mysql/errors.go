@@ -57,12 +57,12 @@ func DescribeError(err error) (msg, code string, ok bool) {
 	code = "mysql:" + strconv.Itoa(int(me.Number))
 	switch {
 	case me.Number == ErrQueryTimeout || me.Number == ErrQueryInterrupted:
-		return "時間切れで中止しました（max_execution_time）。条件を絞るか、インデックスが効く形にしてください。", code, true
+		return "Canceled because it timed out (max_execution_time). Narrow the conditions or rewrite the query so it can use an index.", code, true
 	case me.Number == ErrLockWaitTimeout:
-		return "ロックを取得できず中止しました（lock_wait_timeout）。", code, true
+		return "Canceled because a lock could not be acquired (lock_wait_timeout).", code, true
 	case errorsWithIdentifiers[me.Number]:
-		return "データベースのエラー: " + me.Message, code, true
+		return "Database error: " + me.Message, code, true
 	default:
-		return fmt.Sprintf("データベースのエラー（MySQL %d）。値を含む可能性があるため詳細は返しません。", me.Number), code, true
+		return fmt.Sprintf("Database error (MySQL %d). Details are withheld because they may contain values.", me.Number), code, true
 	}
 }

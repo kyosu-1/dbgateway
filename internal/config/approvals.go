@@ -89,7 +89,7 @@ var ApprovalDefaultPolicies = []Rule{
 		Name:   "default-deny-ddl",
 		When:   `stmt.kind == "ddl"`,
 		Action: ActionDeny,
-		Hint:   "スキーマ変更はdbgatewayでは実行しません。マイグレーションファイルを作成し、PRでレビューを受けて適用してください。",
+		Hint:   "dbgateway does not run schema changes. Write a migration file, get it reviewed in a PR, and apply it.",
 	},
 	{Name: "default-reads", When: `stmt.kind == "select" && !stmt.is_write`, Action: ActionAllow},
 	{Name: "default-writes", When: `stmt.is_write`, Action: ActionApprove},

@@ -39,7 +39,7 @@ type auditRow struct {
 	Sub      string
 }
 
-// auditTitle summarizes an entry: "users の読み取り · 3行".
+// auditTitle summarizes an entry: "Read users · 3 rows".
 func auditTitle(p *i18n.Printer, e *audit.StoredEntry) string {
 	switch e.Event {
 	case "query", "explain":

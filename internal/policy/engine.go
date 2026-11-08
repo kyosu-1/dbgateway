@@ -295,8 +295,8 @@ func (e *Engine) Evaluate(in Input) Decision {
 		Action:  config.ActionDeny,
 		Stage:   analysis.StagePolicy,
 		Rule:    RuleNoMatch,
-		Message: "どのポリシーにも一致しなかったため拒否しました（既定は拒否）。",
-		Hint:    "読み取りのSELECT文であれば、管理者にポリシーの追加を依頼してください。",
+		Message: "Denied because no policy matched (the default is deny).",
+		Hint:    "If this is a read-only SELECT, ask an administrator to add a policy.",
 	}
 	for _, cr := range e.rules {
 		out, _, err := cr.prg.Eval(act)
@@ -310,7 +310,7 @@ func (e *Engine) Evaluate(in Input) Decision {
 		d = Decision{Action: cr.rule.Action, Stage: analysis.StagePolicy, Rule: cr.rule.Name, Require: cr.rule.Require,
 			Message: cr.rule.Message, Hint: cr.rule.Hint}
 		if d.Action == config.ActionDeny && d.Message == "" {
-			d.Message = fmt.Sprintf("ポリシー %q により拒否しました。", cr.rule.Name)
+			d.Message = fmt.Sprintf("Denied by policy %q.", cr.rule.Name)
 		}
 		break
 	}
@@ -336,8 +336,8 @@ func (e *Engine) decide(in Input, d Decision) Decision {
 		if !e.approvals {
 			return Decision{
 				Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleWriteNotEnabled,
-				Message: "書き込みには承認機能が必要ですが、承認機能が有効になっていません（approvals.enabled）。",
-				Hint:    "読み取りのSELECT文で実行するか、変更内容を人に依頼してください。",
+				Message: "Writes require approvals, but approvals are not enabled (approvals.enabled).",
+				Hint:    "Run a read-only SELECT instead, or ask a person to make the change.",
 			}
 		}
 		return e.approve(in, d)
@@ -351,8 +351,8 @@ func (e *Engine) decide(in Input, d Decision) Decision {
 		// approvers' step-up covers it (see approve).
 		return Decision{
 			Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleStepUpNotEnabled,
-			Message: fmt.Sprintf("ポリシー %q は本人の再確認（ステップアップ認証）を求めていますが、読み取りでのステップアップ認証には対応していません。", d.Rule),
-			Hint:    "管理者に問い合わせてください。",
+			Message: fmt.Sprintf("Policy %q requires the user to re-verify their identity (step-up authentication), but step-up authentication is not supported for reads.", d.Rule),
+			Hint:    "Contact an administrator.",
 		}
 	}
 	return d
@@ -363,7 +363,7 @@ func (e *Engine) decide(in Input, d Decision) Decision {
 func (e *Engine) guards(in Input) *Decision {
 	if in.Stmt.IsWrite || in.Stmt.Kind != string(analysis.KindSelect) {
 		return &Decision{Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleWriteGuard,
-			Message: "読み取り以外の文は実行できません。", Hint: "SELECT文で表現してください。"}
+			Message: "Only read statements can be run.", Hint: "Express it as a SELECT statement."}
 	}
 	return commonGuards(in)
 }
@@ -375,8 +375,8 @@ func (e *Engine) guards(in Input) *Decision {
 func commonGuards(in Input) *Decision {
 	if in.Stmt.Unknown {
 		return &Decision{Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleUnknown,
-			Message: "SQLの一部（参照する表や列）を判断できなかったため、自動では実行しません。",
-			Hint:    "存在する表と列を明示し（* や複雑な関数を避け）、もっと単純な形で書き直してください。"}
+			Message: "Part of the SQL (the tables or columns it references) could not be determined, so it is not run automatically.",
+			Hint:    "Name existing tables and columns explicitly (avoid * and complex functions) and rewrite it in a simpler form."}
 	}
 	if in.Principal.Kind == string(identity.KindAgent) {
 		for _, c := range in.Columns {
@@ -386,8 +386,8 @@ func commonGuards(in Input) *Decision {
 			for _, u := range c.Usage {
 				if u == string(analysis.UsageFilter) || u == string(analysis.UsageGroup) || u == string(analysis.UsageOrder) {
 					return &Decision{Action: config.ActionDeny, Stage: analysis.StagePolicy, Rule: RuleSensitivePredicate,
-						Message: fmt.Sprintf("列 %s（区分 %s）を条件・集計・並べ替え（%s）に使っています。値を推測できてしまうため、AIからのクエリでは使えません。", c.Name, c.Class, u),
-						Hint:    "この列を WHERE / JOIN / GROUP BY / ORDER BY などで使わずに書き直してください。公開してよい列なら、管理者に data_classes で public への分類を依頼してください。"}
+						Message: fmt.Sprintf("Column %s (class %s) is used in a condition, aggregation or sort (%s). Its values could be inferred, so it cannot be used this way in queries from AI agents.", c.Name, c.Class, u),
+						Hint:    "Rewrite the query without using this column in WHERE / JOIN / GROUP BY / ORDER BY, etc. If the column is safe to expose, ask an administrator to classify it as public in data_classes."}
 				}
 			}
 		}
@@ -398,13 +398,13 @@ func commonGuards(in Input) *Decision {
 func (e *Engine) defaultHint(st Stmt) string {
 	switch {
 	case st.Kind == string(analysis.KindDDL):
-		return "スキーマ変更はdbgatewayでは実行しません。マイグレーションファイルを作成し、PRでレビューを受けて適用してください。"
+		return "dbgateway does not run schema changes. Write a migration file, get it reviewed in a PR, and apply it."
 	case st.IsWrite && !st.HasWhere:
-		return "WHEREがありません。対象の行を絞ってください。"
+		return "There is no WHERE clause. Narrow down the target rows."
 	case st.IsWrite && !e.approvals:
-		return "書き込みは承認機能の有効化後に申請できます。"
+		return "Writes can be requested once approvals are enabled."
 	case st.IsWrite:
-		return "この書き込みはポリシーで許可されていません。必要な場合は管理者に問い合わせてください。"
+		return "This write is not allowed by policy. If it is needed, contact an administrator."
 	}
-	return "条件を見直すか、管理者に問い合わせてください。"
+	return "Revise the query or contact an administrator."
 }

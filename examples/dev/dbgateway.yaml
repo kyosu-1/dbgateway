@@ -43,9 +43,9 @@ databases:
 
 groups:
   - name: developers
-    members: [dev@example.com, taro@example.com]
+    members: [dev@example.com, alice@example.com]
   - name: approvers
-    members: [hanako@example.com]
+    members: [bob@example.com]
 
 role_bindings:
   - group: developers
@@ -55,12 +55,12 @@ role_bindings:
     databases: "*"
     roles: [querier, writer, approver]
 
-# hanako may also use the audit log and user screens.
+# bob may also use the audit log and user screens.
 auditors:
-  - user: hanako@example.com
+  - user: bob@example.com
 
-# Writes are submitted for approval: log in as taro@example.com, let an
-# agent run an UPDATE, then approve it as hanako@example.com.
+# Writes are submitted for approval: log in as alice@example.com, let an
+# agent run an UPDATE, then approve it as bob@example.com.
 approvals:
   enabled: true
   step_up_max_age: 5m
@@ -110,14 +110,14 @@ policies:
     when: stmt.kind == "ddl"
     action: deny
   - name: deny-unbounded-writes
-    when: stmt.is_write && !stmt.has_where
+    when: stmt.kind in ["update", "delete"] && !stmt.has_where
     action: deny
-    hint: "WHEREがありません。対象を絞って再実行してください。"
+    hint: "There is no WHERE clause. Narrow down the target rows and run it again."
   - name: agents-never-see-no-ai
     when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
     action: deny
-    message: "AIに送らない区分（no_ai）の列を参照しています。"
-    hint: "この列を除いて再実行してください。"
+    message: "The query references a column classified as no_ai, which is never sent to AI agents."
+    hint: "Remove this column and run it again."
   - name: reads
     when: stmt.kind == "select" && !stmt.is_write
     action: allow

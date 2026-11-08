@@ -20,8 +20,9 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/web/ui"
 )
 
-// The SQL editor (/console) is how people run SQL (the same approach as
-// Bytebase: there is no wire-protocol proxy for desktop clients). It is a
+// The SQL editor (/console) is how people run SQL (there is no
+// wire-protocol endpoint for desktop clients, which could keep results
+// outside dbgateway's control). It is a
 // plain form that works without JavaScript; /static/editor.js adds the
 // CodeMirror editor, completion, tabs and sorting on top.
 

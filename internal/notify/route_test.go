@@ -69,7 +69,10 @@ func TestCatalogParity(t *testing.T) {
 	if got := en.requester(&events.Principal{Human: "taro@example.com", Agent: "claude-code"}); got != "claude-code on behalf of taro@example.com" {
 		t.Errorf("en requester = %q", got)
 	}
-	if got := newMsgs("xx").t("button.reject"); got != "却下" {
+	if got := newMsgs("xx").t("button.reject"); got != "Reject" {
 		t.Errorf("fallback = %q", got)
+	}
+	if got := newMsgs("ja").t("button.reject"); got != "却下" {
+		t.Errorf("ja = %q", got)
 	}
 }
