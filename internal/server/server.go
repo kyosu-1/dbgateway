@@ -26,6 +26,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/gateway"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
+	"github.com/kyosu-1/dbgateway/internal/notify"
 	"github.com/kyosu-1/dbgateway/internal/pgproxy"
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/scim"
@@ -34,13 +35,15 @@ import (
 
 // Server is a running dbgateway instance.
 type Server struct {
-	cfg     *config.Config
-	logger  *slog.Logger
-	handler http.Handler
+	cfg       *config.Config
+	logger    *slog.Logger
+	handler   http.Handler
 	closers   []func()
 	auth      *auth.Server
-	pgproxy   *pgproxy.Server   // nil when disabled
-	approvals *approval.Service // nil when approvals are disabled
+	pgproxy   *pgproxy.Server    // nil when disabled
+	approvals *approval.Service  // nil when approvals are disabled
+	notifier  *notify.Dispatcher // nil when no notifications are configured
+	anomaly   *notify.Anomaly    // nil when no notifications are configured
 }
 
 // New builds the server from a validated configuration.
@@ -63,22 +66,37 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	}
 	s.closers = append(s.closers, func() { _ = auditLog.Close() })
 
-	gw, err := gateway.New(gateway.Options{
-		Config:   cfg,
-		Adapters: map[string]analysis.Adapter{"postgres": postgres.New(cfg.SQL.AllowedFunctions)},
-		Audit:    auditLog,
-		Logger:   logger,
-	})
-	if err != nil {
-		return nil, err
-	}
-	s.closers = append(s.closers, gw.Close)
-
 	st, err := store.OpenSQLite(ctx, cfg.Store.Path)
 	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
 	s.closers = append(s.closers, func() { _ = st.Close() })
+
+	// Notifications (best effort; never affect request outcomes).
+	var pub events.Publisher = events.Nop{}
+	if cfg.NotificationsEnabled() {
+		s.notifier = notify.New(notify.Options{Config: cfg, Store: st, Logger: logger})
+		s.closers = append(s.closers, s.notifier.Close)
+		s.anomaly = notify.NewAnomaly(s.notifier, notify.AnomalyOptions{Config: cfg})
+		pub = s.anomaly
+	}
+	if changed, prev, err := notify.ConfigChanged(ctx, st, cfg.Version); err != nil {
+		logger.Warn("record config version failed", "err", err)
+	} else if changed {
+		pub.Publish(ctx, notify.ConfigChangedEvent(prev, cfg.Version))
+	}
+
+	gw, err := gateway.New(gateway.Options{
+		Config:   cfg,
+		Adapters: map[string]analysis.Adapter{"postgres": postgres.New(cfg.SQL.AllowedFunctions)},
+		Audit:    auditLog,
+		Logger:   logger,
+		Events:   pub,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.closers = append(s.closers, gw.Close)
 
 	authSrv, err := auth.New(ctx, auth.Options{Config: cfg, Store: st, RBAC: policy.NewRBAC(cfg), Logger: logger})
 	if err != nil {
@@ -98,8 +116,11 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 
 	var mcpOpts []mcpserver.Option
 	if cfg.Approvals.Enabled {
-		s.approvals = approval.New(approval.Options{Config: cfg, Store: st, Executor: gw, Audit: auditLog, Events: events.Nop{}, Logger: logger})
+		s.approvals = approval.New(approval.Options{Config: cfg, Store: st, Executor: gw, Audit: auditLog, Events: pub, Logger: logger})
 		gw.SetApprovals(s.approvals)
+		if s.notifier != nil {
+			s.notifier.SetApprovals(s.approvals) // Slack reject button
+		}
 		mcpOpts = append(mcpOpts, mcpserver.WithApprovals(s.approvals))
 	}
 	mcpSrv := mcpserver.NewServer(gw, auth.PrincipalFromTokenInfo, mcpOpts...)
@@ -183,6 +204,9 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.auth.RunCleanup(ctx, 10*time.Minute) // expired sessions, codes and tokens
 	if s.approvals != nil {
 		go s.approvals.Run(ctx) // expiry, and resuming approved executions
+	}
+	if s.notifier != nil {
+		go func() { _ = s.notifier.Run(ctx) }() // Slack Socket Mode (outbound only)
 	}
 
 	errc := make(chan error, 2)
