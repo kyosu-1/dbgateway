@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package dbgateway.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/kyosu-1/dbgateway/gen/dbgateway/v1;dbgatewayv1";
+
+// TokenService manages the caller's own tokens.
+//
+// Every RPC requires a human bearer token (as issued by `dbgw login`).
+// Agent tokens can never mint, list or revoke tokens.
+service TokenService {
+  // CreateAgentToken mints a short-lived token for an AI agent acting on
+  // behalf of the caller. The agent can never exceed the caller's
+  // permissions.
+  rpc CreateAgentToken(CreateAgentTokenRequest) returns (CreateAgentTokenResponse);
+  // ListTokens lists tokens issued on behalf of the caller.
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  // RevokeToken revokes one of the caller's tokens, together with every
+  // token derived from it (refresh rotations and minted agent tokens).
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+}
+
+// TokenKind says who uses the token.
+enum TokenKind {
+  TOKEN_KIND_UNSPECIFIED = 0;
+  // A human (for example the dbgw CLI).
+  TOKEN_KIND_HUMAN = 1;
+  // An AI agent acting on behalf of a human.
+  TOKEN_KIND_AGENT = 2;
+}
+
+// TokenType distinguishes access tokens from refresh tokens.
+enum TokenType {
+  TOKEN_TYPE_UNSPECIFIED = 0;
+  TOKEN_TYPE_ACCESS = 1;
+  TOKEN_TYPE_REFRESH = 2;
+}
+
+// Token describes an issued token. The secret value is never included.
+message Token {
+  string id = 1;
+  TokenKind kind = 2;
+  TokenType type = 3;
+  // Email of the human the token belongs to (or acts for).
+  string human = 4;
+  // Agent name registered at consent / creation time. Empty for humans.
+  string agent_name = 5;
+  // OAuth client ID.
+  string client_id = 6;
+  // Self-reported client name. Informational only.
+  string client_name = 7;
+  // Database restriction. Empty means no extra restriction.
+  repeated string databases = 8;
+  repeated string scopes = 9;
+  google.protobuf.Timestamp create_time = 10;
+  google.protobuf.Timestamp expire_time = 11;
+  // Set when the token has been revoked.
+  google.protobuf.Timestamp revoke_time = 12;
+  // ID of the token this one was derived from, if any.
+  string parent_id = 13;
+}
+
+message CreateAgentTokenRequest {
+  // Name identifying the agent in audit logs, e.g. "claude-code".
+  string agent_name = 1;
+  // Databases the agent may access. Must be a subset of the databases the
+  // caller can access. Required.
+  repeated string databases = 2;
+  // Requested lifetime in seconds. Zero means the server maximum; larger
+  // values are capped to the server maximum.
+  int64 ttl_seconds = 3;
+  // Requested scopes. Empty means ["db:read"]. Only "db:read" is available
+  // in phase 1.
+  repeated string scopes = 4;
+}
+
+message CreateAgentTokenResponse {
+  // The bearer token. Shown only once.
+  string access_token = 1;
+  google.protobuf.Timestamp expire_time = 2;
+  Token token = 3;
+}
+
+message ListTokensRequest {
+  // Also include expired and revoked tokens.
+  bool include_inactive = 1;
+}
+
+message ListTokensResponse {
+  repeated Token tokens = 1;
+}
+
+message RevokeTokenRequest {
+  string id = 1;
+}
+
+message RevokeTokenResponse {}

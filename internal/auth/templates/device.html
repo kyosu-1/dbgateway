@@ -1,0 +1,32 @@
+{{define "content"}}
+<main class="card card-device">
+<div class="stack-14">
+<span class="client-icon">{{template "icon-terminal"}}</span>
+<h1>{{t "device.heading"}}</h1>
+<p class="small muted">{{t "device.logged_in_as" .Email}}{{t "device.lead_before"}}<code>dbgw login</code>{{t "device.lead_after"}}</p>
+</div>
+{{if eq .Result "approved"}}
+<div class="status status-success" role="status">{{template "icon-check"}}<span>{{t "device.approved_message"}}</span></div>
+{{else if eq .Result "denied"}}
+<div class="status" role="status">{{template "icon-shield"}}<span>{{t "device.denied_message"}}</span></div>
+{{else}}
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+<form method="post" action="/device" class="stack-24">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="field">
+<label for="user_code">{{t "device.code_label"}}</label>
+<input id="user_code" name="user_code" type="text" class="code-input" value="{{.UserCode}}" placeholder="XXXX-XXXX" maxlength="9" required autocomplete="off" autocapitalize="characters" spellcheck="false"{{if not .UserCode}} autofocus{{end}}>
+<p class="hint">{{t "device.code_hint"}}</p>
+</div>
+<ul class="info">
+<li>{{template "icon-clock"}}<span>{{t "device.info_ttl" (fmtDuration .TTL)}}</span></li>
+<li>{{template "icon-shield"}}<span>{{t "device.info_agents_before"}}<code>dbgw mcp stdio</code>{{t "device.info_agents_after" (fmtDuration .AgentTTL)}}</span></li>
+</ul>
+<div class="actions">
+<button type="submit" name="action" value="approve" class="btn btn-primary">{{t "device.approve"}}</button>
+<button type="submit" name="action" value="deny" class="btn btn-secondary">{{t "device.deny"}}</button>
+</div>
+</form>
+{{end}}
+</main>
+{{end}}

@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - name: Lint
+        run: |
+          go vet ./...
+          test -z "$(gofmt -l . | grep -v '^gen/')"
+          buf lint
+      - name: Generated code is up to date
+        run: |
+          buf generate
+          git diff --exit-code -- gen
+      - name: Unit tests
+        run: go test -race ./...
+      - name: Validate example configs and run policy tests
+        run: |
+          go build -o bin/dbgw ./cmd/dbgw
+          bin/dbgw config validate --config examples/dbgateway.yaml
+          bin/dbgw config validate --config examples/dev/dbgateway.yaml
+          bin/dbgw policy test testdata/policy/*.yaml
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Start PostgreSQL
+        run: docker compose -f examples/dev/compose.yaml up -d --wait
+      - name: Integration tests
+        run: go test -tags integration -count=1 ./...

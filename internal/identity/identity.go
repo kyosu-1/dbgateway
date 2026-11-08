@@ -45,13 +45,13 @@ const (
 // narrow the agent further.
 type Principal struct {
 	Kind     Kind     `json:"kind"`
-	Human    string   `json:"human"`              // email / subject of the human
-	Groups   []string `json:"groups,omitempty"`   // dbgateway group names
-	Agent    string   `json:"agent,omitempty"`    // name registered at consent time
+	Human    string   `json:"human"`               // email / subject of the human
+	Groups   []string `json:"groups,omitempty"`    // dbgateway group names
+	Agent    string   `json:"agent,omitempty"`     // name registered at consent time
 	ClientID string   `json:"client_id,omitempty"` // OAuth client ID
 	// ClientName is the self-reported client name. Informational only; it is
 	// recorded in the audit log but never used for decisions.
-	ClientName string `json:"client_name,omitempty"`
+	ClientName string   `json:"client_name,omitempty"`
 	Scopes     []string `json:"-"`
 	// Databases restricts which databases the token may touch. Nil or empty
 	// means "no extra restriction" (role bindings still apply).

@@ -1,0 +1,67 @@
+{{define "content"}}
+<main class="card">
+<div class="stack-14">
+<div class="client">
+<span class="client-icon">{{template "icon-robot"}}</span>
+<div class="client-meta">
+<span class="client-name">{{.Client.Name}}</span>
+{{if .Verified}}<span class="badge-ok">{{template "icon-check"}}{{t "consent.verified"}}</span>
+{{else}}<span class="badge-warn">{{template "icon-alert"}}{{t "consent.self_reported"}}</span>{{end}}
+</div>
+</div>
+<h1>{{t "consent.heading"}}</h1>
+<p class="small muted">{{t "consent.logged_in_as" .Email}}<a href="{{.SwitchURL}}" class="inline-link">{{t "consent.switch_account"}}</a></p>
+<dl class="kv">
+<div><dt>{{t "consent.client_id"}}</dt><dd class="mono">{{.Client.ID}}</dd></div>
+<div><dt>{{t "consent.redirect"}}</dt><dd class="mono">{{.RedirectHost}}</dd></div>
+</dl>
+</div>
+
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+
+<form method="post" action="/authorize" class="stack-24">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+{{range $k, $v := .Hidden}}<input type="hidden" name="{{$k}}" value="{{index $v 0}}">
+{{end}}
+<div class="field">
+<label for="agent_name">{{t "consent.agent_name"}}</label>
+<input id="agent_name" name="agent_name" type="text" value="{{.AgentName}}" maxlength="64" required autocomplete="off" spellcheck="false">
+<p class="hint">{{t "consent.agent_name_hint"}}</p>
+</div>
+
+<fieldset class="choices">
+<legend>{{t "consent.scope_legend"}}</legend>
+{{range .Databases}}{{if .Enabled}}
+<label class="choice">
+<input type="checkbox" name="database" value="{{.Name}}"{{if .Selected}} checked{{end}}>
+<span class="choice-body">
+<span class="choice-title">{{t "consent.db_read" .Name}}</span>
+<span class="choice-desc">{{t "consent.db_read_desc"}}{{if .Labels}} · {{.Labels}}{{end}}</span>
+</span>
+</label>
+{{else}}
+<div class="choice choice-disabled">
+<input type="checkbox" disabled aria-label="{{t "consent.db_unavailable_label" .Name}}">
+<span class="choice-body">
+<span class="choice-title">{{.Name}}</span>
+<span class="choice-desc">{{t "consent.db_unavailable"}}</span>
+</span>
+</div>
+{{end}}{{end}}
+{{if not .HasAny}}<p class="alert alert-warn">{{t "consent.no_databases"}}</p>{{end}}
+</fieldset>
+
+<ul class="info">
+<li>{{template "icon-shield"}}<span>{{t "consent.info_no_escalation"}}</span></li>
+<li>{{template "icon-person"}}<span>{{t "consent.info_no_self_approval"}}</span></li>
+<li>{{template "icon-clock"}}<span>{{t "consent.info_ttl" (fmtDuration .MaxTTL)}}{{t "consent.info_revoke_before"}}<a href="/account" class="inline-link">{{t "consent.info_revoke_link"}}</a>{{t "consent.info_revoke_after"}}</span></li>
+</ul>
+
+<div class="actions">
+<button type="submit" name="action" value="approve" class="btn btn-primary"{{if not .HasAny}} disabled{{end}}>{{t "consent.approve"}}</button>
+<button type="submit" name="action" value="deny" class="btn btn-secondary" formnovalidate>{{t "consent.cancel"}}</button>
+</div>
+</form>
+</main>
+<p class="footnote">{{t "consent.footnote"}}</p>
+{{end}}

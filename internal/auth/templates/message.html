@@ -1,0 +1,8 @@
+{{define "content"}}
+<main class="card card-narrow message{{if .Tone}} message-{{.Tone}}{{end}}">
+<span class="message-icon">{{if eq .Tone "success"}}{{template "icon-check"}}{{else if eq .Tone "error"}}{{template "icon-alert"}}{{else}}{{template "icon-shield"}}{{end}}</span>
+<h1>{{t .Heading}}</h1>
+<p>{{t .Message}}</p>
+{{if .LoginLink}}<a class="btn btn-secondary" href="/login">{{t "logout.login_again"}}</a>{{end}}
+</main>
+{{end}}

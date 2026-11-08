@@ -1,0 +1,57 @@
+{{define "content"}}
+<div class="page-head">
+<div class="stack-4">
+<h1>{{t "account.heading"}}</h1>
+<p class="muted">{{t "account.summary" .Email (t .LoginMethod) (or .Groups (t "account.groups_none"))}}</p>
+</div>
+<form method="post" action="/logout">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit" class="btn-small">{{t "account.logout"}}</button>
+</form>
+</div>
+
+{{if .Notice}}<p class="alert alert-success" role="status">{{t .Notice}}</p>{{end}}
+
+<div class="panel">
+<section aria-labelledby="h-agents" class="panel-section">
+<div class="stack-2">
+<h2 id="h-agents">{{t "account.agents_heading"}}</h2>
+<p class="small muted">{{t "account.agents_lead"}}</p>
+</div>
+{{if .Agents}}
+<ul class="rows">
+{{range .Agents}}
+<li class="row">
+<span class="row-main">
+<span class="row-title">{{.Agent}} {{if .Manual}}<span class="tag">· {{t "account.manual_token"}}</span>{{else if .ClientName}}<span class="tag">· {{.ClientName}}</span>{{end}}</span>
+<span class="row-sub">{{range $i, $db := .Databases}}{{if $i}} · {{end}}{{t "account.db_read" $db}}{{end}} · {{t "account.expires" (fmtTime .ExpiresAt)}}</span>
+</span>
+<form method="post" action="/account/revoke">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="id" value="{{.ID}}">
+<button type="submit" class="btn-small btn-danger-text">{{t "account.revoke"}}</button>
+</form>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="empty">{{t "account.agents_empty"}}</p>
+{{end}}
+</section>
+
+<section aria-labelledby="h-roles" class="panel-section">
+<div class="stack-2">
+<h2 id="h-roles">{{t "account.roles_heading"}}</h2>
+<p class="small muted">{{t "account.roles_lead"}}</p>
+</div>
+{{if .Roles}}
+<dl class="deflist">
+{{range .Roles}}<div><dt>{{.Name}}</dt><dd>{{.Roles}}{{range .Notes}} <span class="note-warn">{{t "account.role_until" .Roles (fmtTime .Until)}}</span>{{end}}</dd></div>
+{{end}}
+</dl>
+{{else}}
+<p class="empty">{{t "account.roles_empty"}}</p>
+{{end}}
+</section>
+</div>
+{{end}}

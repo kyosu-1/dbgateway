@@ -1,0 +1,29 @@
+{{define "content"}}
+<main class="login-stack">
+{{if .SSOURL}}
+<section class="card" aria-labelledby="h-sso">
+<div class="stack-6">
+<h1 id="h-sso">{{t "login.heading"}}</h1>
+<p class="small muted">{{t "login.lead"}}</p>
+</div>
+<a class="btn btn-primary btn-block" href="{{.SSOURL}}">{{template "icon-lock"}}{{t "login.sso"}}</a>
+<p class="hint">{{t "login.sso_note" .IdPHost}}</p>
+</section>
+{{end}}
+{{if .Dev}}
+<section class="card card-dev" aria-labelledby="h-dev">
+<div class="note-warn-box" role="note">{{template "icon-warning"}}<span><strong>{{t "login.dev_title_warning"}}</strong>{{t "login.dev_warning"}}</span></div>
+{{if .SSOURL}}<h2 id="h-dev">{{t "login.dev_heading"}}</h2>{{else}}<h1 id="h-dev">{{t "login.dev_heading"}}</h1>{{end}}
+{{if .Error}}<p class="alert alert-error" role="alert">{{t .Error}}</p>{{end}}
+<form method="post" action="/login" class="stack-12">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="field">
+<label for="email">{{t "login.email"}}</label>
+<input id="email" name="email" type="email" autocomplete="email" required{{if not .SSOURL}} autofocus{{end}} placeholder="dev@example.com">
+</div>
+<button type="submit" class="btn btn-secondary">{{t "login.submit"}}</button>
+</form>
+</section>
+{{end}}
+</main>
+{{end}}
