@@ -44,7 +44,8 @@ databases:
       dbname: app
       read_user: dbgw_reader
       password_env: DBGW_IT_PASSWORD
-      sslmode: disable
+      sslmode: %s
+      sslrootcert: "%s"
     limits: { max_rows: 50, max_bytes: 64KiB, statement_timeout: 1s }
 groups:
   - { name: dev, members: [taro@example.com] }
@@ -57,7 +58,8 @@ data_classes:
   - { column_pattern: "public\\.[a-z_]+\\.(id|user_id|plan|amount|status|reason|subject|created_at)", class: public }
 semantic_types:
   contact: { method: partial }
-%s`, env("DBGW_TEST_PG_HOST", "127.0.0.1"), env("DBGW_TEST_PG_PORT", "55432"), extra)
+%s`, env("DBGW_TEST_PG_HOST", "127.0.0.1"), env("DBGW_TEST_PG_PORT", "55432"),
+		env("DBGW_TEST_PG_SSLMODE", "disable"), env("DBGW_TEST_PG_SSLROOTCERT", ""), extra)
 	cfg, err := config.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatal(err)
