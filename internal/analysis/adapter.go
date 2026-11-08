@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,13 +35,31 @@ type Conn interface {
 }
 
 // ExecOptions carries the safety limits for one execution.
+//
+// ReadOnly=false selects the write user. Execute then runs the statement
+// in a read-write transaction and commits only if at most MaxAffectedRows
+// rows were affected; Estimate still plans inside a read-only transaction.
 type ExecOptions struct {
 	ReadOnly         bool
-	Replica          bool // run on the replica when one is configured
-	MaxRows          int
+	Replica          bool // run on the replica when one is configured (reads only)
+	MaxRows          int  // rows returned (RETURNING for writes)
 	MaxBytes         int64
 	StatementTimeout time.Duration
 	LockTimeout      time.Duration
+	// MaxAffectedRows bounds the rows a write may affect (required, > 0,
+	// for writes).
+	MaxAffectedRows int64
+}
+
+// AffectedRowsError is returned by Execute when a write affected more rows
+// than ExecOptions.MaxAffectedRows. The transaction has been rolled back.
+type AffectedRowsError struct {
+	Affected int64
+	Max      int64
+}
+
+func (e *AffectedRowsError) Error() string {
+	return fmt.Sprintf("the statement affected %d rows, more than the limit of %d; rolled back", e.Affected, e.Max)
 }
 
 // Estimate is the planner's estimate.
@@ -59,6 +78,8 @@ type Result struct {
 	Truncated bool
 	Bytes     int64
 	Duration  time.Duration
+	// RowsAffected is the number of rows a write changed (0 for reads).
+	RowsAffected int64
 }
 
 // ResultColumn is the name and database type of a result column.

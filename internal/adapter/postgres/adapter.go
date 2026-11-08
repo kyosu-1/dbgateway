@@ -38,6 +38,10 @@ type conn struct {
 	cfg     *config.Database
 	read    *pgxpool.Pool
 	replica *pgxpool.Pool // nil when no replica is configured
+	// write is the write user's pool on the primary; nil when no write user
+	// is configured or the pool could not be set up (writeErr says why).
+	write    *pgxpool.Pool
+	writeErr error
 }
 
 func (c *conn) Close() {
@@ -45,11 +49,15 @@ func (c *conn) Close() {
 	if c.replica != nil {
 		c.replica.Close()
 	}
+	if c.write != nil {
+		c.write.Close()
+	}
 }
 
-// Connect opens the read pool (and the replica pool when configured).
-// Pools connect lazily, so a database that is down does not prevent
-// dbgateway from starting.
+// Connect opens the read pool (and the replica and write pools when
+// configured). Pools connect lazily, so a database that is down does not
+// prevent dbgateway from starting. A broken write configuration (e.g. a
+// missing password variable) does not prevent reads; writes then fail.
 func (a *Adapter) Connect(ctx context.Context, cfg *config.Database) (analysis.Conn, error) {
 	read, err := newPool(ctx, cfg.Primary, cfg.Primary.ReadUser, cfg.Primary.PasswordEnv, true)
 	if err != nil {
@@ -63,7 +71,21 @@ func (a *Adapter) Connect(ctx context.Context, cfg *config.Database) (analysis.C
 			return nil, fmt.Errorf("database %s replica: %w", cfg.Name, err)
 		}
 	}
+	if cfg.Primary.WriteUser == "" {
+		c.writeErr = errNoWriteUser
+	} else if c.write, err = newPool(ctx, cfg.Primary, cfg.Primary.WriteUser, cfg.Primary.WritePasswordEnv, false); err != nil {
+		c.writeErr = fmt.Errorf("database %s write user: %w", cfg.Name, err)
+	}
 	return c, nil
+}
+
+var errNoWriteUser = errors.New("no write user is configured for this database")
+
+func (c *conn) writePool() (*pgxpool.Pool, error) {
+	if c.write == nil {
+		return nil, c.writeErr
+	}
+	return c.write, nil
 }
 
 func newPool(ctx context.Context, ep config.Endpoint, user, passwordEnv string, readOnly bool) (*pgxpool.Pool, error) {
@@ -113,10 +135,17 @@ func (c *conn) pool(replica bool) *pgxpool.Pool {
 	return c.read
 }
 
-// withReadTx runs fn in a READ ONLY transaction with timeouts and the fixed
-// search path, then resets the connection state with DISCARD ALL. A
-// connection whose state cannot be reset is destroyed rather than reused.
+// withReadTx runs fn in a READ ONLY transaction on the read (or replica)
+// pool; see withTx.
 func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func(pgx.Tx) error) error {
+	return c.withTx(ctx, c.pool(opt.Replica), pgx.ReadOnly, opt, fn)
+}
+
+// withTx runs fn in a transaction with the given access mode, timeouts and
+// the fixed search path, then resets the connection state with DISCARD
+// ALL. A connection whose state cannot be reset is destroyed rather than
+// reused. The transaction is rolled back unless fn commits it.
+func (c *conn) withTx(ctx context.Context, pool *pgxpool.Pool, mode pgx.TxAccessMode, opt analysis.ExecOptions, fn func(pgx.Tx) error) error {
 	timeout := opt.StatementTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -124,7 +153,7 @@ func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func
 	ctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
 
-	pc, err := c.pool(opt.Replica).Acquire(ctx)
+	pc, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -139,7 +168,7 @@ func (c *conn) withReadTx(ctx context.Context, opt analysis.ExecOptions, fn func
 		pc.Release()
 	}()
 
-	tx, err := pc.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	tx, err := pc.BeginTx(ctx, pgx.TxOptions{AccessMode: mode})
 	if err != nil {
 		return err
 	}
@@ -168,12 +197,15 @@ func searchPath(schemas []string) string {
 	return strings.Join(parts, ", ")
 }
 
-// Execute runs a read-only statement. Phase 1 never executes writes.
+// Execute runs one statement. Reads run in a READ ONLY transaction on the
+// read (or replica) pool. Writes (opt.ReadOnly == false) run on the write
+// pool in a READ WRITE transaction that is committed only when the number
+// of affected rows is within opt.MaxAffectedRows.
 func (a *Adapter) Execute(ctx context.Context, ac analysis.Conn, sql string, opt analysis.ExecOptions) (*analysis.Result, error) {
-	if !opt.ReadOnly {
-		return nil, errors.New("write execution is not supported (approvals are not enabled)")
-	}
 	c := ac.(*conn)
+	if !opt.ReadOnly {
+		return c.executeWrite(ctx, sql, opt)
+	}
 	res := &analysis.Result{TotalRows: -1}
 	start := time.Now()
 	err := c.withReadTx(ctx, opt, func(tx pgx.Tx) error {
@@ -182,40 +214,9 @@ func (a *Adapter) Execute(ctx context.Context, ac analysis.Conn, sql string, opt
 			return err
 		}
 		defer rows.Close()
-		tm := tx.Conn().TypeMap()
-		for _, fd := range rows.FieldDescriptions() {
-			typ := strconv.FormatUint(uint64(fd.DataTypeOID), 10)
-			if t, ok := tm.TypeForOID(fd.DataTypeOID); ok {
-				typ = t.Name
-			}
-			res.Columns = append(res.Columns, analysis.ResultColumn{Name: fd.Name, Type: typ})
-		}
-		var produced int64
-		for rows.Next() {
-			produced++
-			if res.Truncated {
-				continue // keep counting to report the total
-			}
-			raw := rows.RawValues()
-			var size int64
-			for _, v := range raw {
-				size += int64(len(v))
-			}
-			if (opt.MaxRows > 0 && res.RowCount >= opt.MaxRows) || (opt.MaxBytes > 0 && res.Bytes+size > opt.MaxBytes) {
-				res.Truncated = true
-				continue
-			}
-			vals, err := rows.Values()
-			if err != nil {
-				return err
-			}
-			row := make([]any, len(vals))
-			for i, v := range vals {
-				row[i] = jsonValue(v)
-			}
-			res.Rows = append(res.Rows, row)
-			res.RowCount++
-			res.Bytes += size
+		produced, err := collectRows(tx, rows, opt, res)
+		if err != nil {
+			return err
 		}
 		if err := rows.Err(); err != nil {
 			if res.Truncated {
@@ -235,12 +236,102 @@ func (a *Adapter) Execute(ctx context.Context, ac analysis.Conn, sql string, opt
 	return res, nil
 }
 
+// executeWrite runs a write and its RETURNING rows. Every row is consumed
+// (the statement must complete) even when the returned rows are truncated.
+func (c *conn) executeWrite(ctx context.Context, sql string, opt analysis.ExecOptions) (*analysis.Result, error) {
+	if opt.MaxAffectedRows <= 0 {
+		return nil, errors.New("refusing a write without an affected-rows limit")
+	}
+	pool, err := c.writePool()
+	if err != nil {
+		return nil, err
+	}
+	res := &analysis.Result{TotalRows: -1}
+	start := time.Now()
+	err = c.withTx(ctx, pool, pgx.ReadWrite, opt, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, sql)
+		if err != nil {
+			return err
+		}
+		produced, err := collectRows(tx, rows, opt, res)
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+		if err != nil {
+			return err
+		}
+		res.TotalRows = produced
+		res.RowsAffected = rows.CommandTag().RowsAffected()
+		if res.RowsAffected > opt.MaxAffectedRows {
+			return &analysis.AffectedRowsError{Affected: res.RowsAffected, Max: opt.MaxAffectedRows}
+		}
+		return tx.Commit(ctx)
+	})
+	res.Duration = time.Since(start)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// collectRows reads the result rows into res within the row and byte
+// limits, counting (but not keeping) rows beyond them. It returns the
+// number of rows produced.
+func collectRows(tx pgx.Tx, rows pgx.Rows, opt analysis.ExecOptions, res *analysis.Result) (int64, error) {
+	tm := tx.Conn().TypeMap()
+	for _, fd := range rows.FieldDescriptions() {
+		typ := strconv.FormatUint(uint64(fd.DataTypeOID), 10)
+		if t, ok := tm.TypeForOID(fd.DataTypeOID); ok {
+			typ = t.Name
+		}
+		res.Columns = append(res.Columns, analysis.ResultColumn{Name: fd.Name, Type: typ})
+	}
+	var produced int64
+	for rows.Next() {
+		produced++
+		if res.Truncated {
+			continue // keep counting to report the total
+		}
+		raw := rows.RawValues()
+		var size int64
+		for _, v := range raw {
+			size += int64(len(v))
+		}
+		if (opt.MaxRows > 0 && res.RowCount >= opt.MaxRows) || (opt.MaxBytes > 0 && res.Bytes+size > opt.MaxBytes) {
+			res.Truncated = true
+			continue
+		}
+		vals, err := rows.Values()
+		if err != nil {
+			return produced, err
+		}
+		row := make([]any, len(vals))
+		for i, v := range vals {
+			row[i] = jsonValue(v)
+		}
+		res.Rows = append(res.Rows, row)
+		res.RowCount++
+		res.Bytes += size
+	}
+	return produced, nil
+}
+
 // Estimate returns the planner estimate via EXPLAIN (FORMAT JSON). The SQL
-// has already been analyzed as a single statement.
+// has already been analyzed as a single statement. Writes are planned by
+// the write user (planning checks its privileges) inside a READ ONLY
+// transaction: EXPLAIN without ANALYZE never executes the statement.
 func (a *Adapter) Estimate(ctx context.Context, ac analysis.Conn, sql string, opt analysis.ExecOptions) (*analysis.Estimate, error) {
 	c := ac.(*conn)
+	pool := c.pool(opt.Replica)
+	if !opt.ReadOnly {
+		var err error
+		if pool, err = c.writePool(); err != nil {
+			return nil, err
+		}
+	}
 	var est analysis.Estimate
-	err := c.withReadTx(ctx, opt, func(tx pgx.Tx) error {
+	err := c.withTx(ctx, pool, pgx.ReadOnly, opt, func(tx pgx.Tx) error {
 		var raw []byte
 		if err := tx.QueryRow(ctx, "EXPLAIN (FORMAT JSON) "+sql).Scan(&raw); err != nil {
 			return err
