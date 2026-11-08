@@ -49,3 +49,6 @@ deploy/gcp/*.pem
 deploy/aws-ecs/*.pem
 deploy/aws-ecs/tfplan
 web/editor/node_modules/
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

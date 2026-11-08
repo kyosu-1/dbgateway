@@ -1,56 +1,56 @@
-# SQL エディタ（Web）
+# SQL editor (web)
 
-人が SQL を実行する入口です（`/console`）。Bytebase と同じく、psql や DBeaver を直接つなぐ経路は設けず、SQL の実行は SQL エディタと CLI（[cli.md](cli.md)）に集約します。
+The SQL editor (`/console`) is where people run SQL. dbgateway does not offer a path for connecting psql, DBeaver or other desktop clients directly, because such clients could save or export results outside dbgateway's control. People run SQL in the SQL editor and the CLI ([cli.md](cli.md)).
 
-エディタからのクエリは、AI エージェントと同じゲートウェイ（解析、ポリシー、マスキング、監査）を通ります。画面の機能は便利さのためのもので、安全策は増えも減りもしません。
+Queries from the editor go through the same gateway as AI agents (parsing, policies, masking, audit log). The editor's features are conveniences; they neither add nor remove safeguards.
 
-## できること
+## Features
 
-| 機能 | 内容 |
+| Feature | Description |
 | --- | --- |
-| エディタ | 構文の色分け、行番号、括弧の対応。`⌘/Ctrl + Enter` で実行、`⌘/Ctrl + Shift + Enter` で判定の確認。選択した部分だけを実行できる |
-| 補完 | SQL のキーワードと、その人が見てよい表・列。列には型と区分（マスク、AIに送らない）を表示 |
-| タブ | 複数のタブで下書きを書ける。下書きはブラウザ内（localStorage）にだけ保存し、サーバーには送らない |
-| スキーマ | 表を開くと列、型、区分。クリックでエディタに挿入。表一覧の表示は監査しない（検索欄での検索は監査する） |
-| 判定を確認 | 実行せずに、許可・承認・拒否、適用ルール、リスク、見積もり行数、マスクされる列を表示 |
-| 結果 | マスクした列に印。列見出しで並べ替え。書き込みは承認待ちになり、承認画面へのリンクを表示 |
-| 履歴 | 自分が実行した SQL（入力どおり）、接続先、理由、結果。本人だけが見られ、既定で30日、最大500件 |
-| 保存したクエリ | 名前をつけて SQL と接続先を保存（本人だけ、最大200件）。結果は保存しない |
-| エクスポート | CSV（UTF-8、BOM 付き）と JSON。下記 |
+| Editor | Syntax highlighting, line numbers, bracket matching. `⌘/Ctrl + Enter` runs the query, `⌘/Ctrl + Shift + Enter` checks the decision. You can run just the selected text |
+| Completion | SQL keywords, plus the tables and columns the person is allowed to see. Columns show their type and data class (`masked`, `no_ai`) |
+| Tabs | Write drafts in several tabs. Drafts are stored only in the browser (localStorage) and never sent to the server |
+| Schema | Opening a table shows its columns, types and data classes. Click to insert into the editor. Listing tables is not audited (searching with the search box is) |
+| Check decision | Without running the query, shows allow / approve / deny, the matching rule, the risk, the estimated rows and the columns that will be masked |
+| Results | Masked columns are marked. Sort by clicking a column header. A write becomes a pending approval request, with a link to the approval page |
+| History | The SQL you ran (as typed), the database, the reason and the outcome. Visible only to you; kept 30 days by default, up to 500 entries |
+| Saved queries | Save SQL and the target database under a name (only you, up to 200). Results are not saved |
+| Export | CSV (UTF-8 with BOM) and JSON. See below |
 
-JavaScript が動かない環境でも、通常のフォームとして実行・判定・保存・エクスポートができます（補完、タブ、並べ替えは使えません）。
+Without JavaScript, the page still works as a plain form for running, checking the decision, saving and exporting (completion, tabs and sorting are unavailable).
 
-## エクスポート
+## Export
 
-- 結果の右上の「エクスポート」から、表示中の結果の SQL をもう一度ゲートウェイに通して書き出します
-- 読み取りだけです。書き込みの文は拒否します。AI エージェント（MCP）からは使えません
-- マスクは通常の実行と同じです。マスクした値はマスクしたまま書き出します
-- 行数の上限は `console.export_max_rows`（既定 10,000行）。ポリシーの `max_rows` がそれより小さければそちらが優先します
-- 監査ログには `event: export` として、形式（`extra.format`）と行数を記録します。拒否も記録します
-- CSV は、表計算ソフトで数式と解釈される値（`=`、`+`、`-`、`@` で始まるもの）の先頭に `'` を付けます
+- "Export" at the top right of the results re-runs the SQL of the displayed result through the gateway and writes the output
+- Read-only: write statements are denied. Not available to AI agents (MCP)
+- Masking is the same as for a normal run; masked values stay masked in the export
+- The row limit is `console.export_max_rows` (default 10,000 rows). A smaller `max_rows` from the policy takes precedence
+- The audit log records `event: export` with the format (`extra.format`) and the row count. Denials are recorded too
+- In CSV, values that a spreadsheet would interpret as a formula (starting with `=`, `+`, `-` or `@`) are prefixed with `'`
 
-## 設定
+## Configuration
 
 ```yaml
 console:
-  history: true              # 実行した SQL を履歴に残す（既定 true）
-  history_retention: 720h    # 履歴の保存期間（既定 30日）
-  export: true               # エクスポートを許可する（既定 true）
-  export_max_rows: 10000     # 1回のエクスポートの行数（既定 10,000）
+  history: true              # keep executed SQL in the history (default true)
+  history_retention: 720h    # how long history is kept (default 30 days)
+  export: true               # allow export (default true)
+  export_max_rows: 10000     # rows per export (default 10,000)
 ```
 
-履歴は入力どおりの SQL（リテラルを含む）を管理用DBに保存します。監査ログはリテラルを除いた正規化済みの SQL を記録します（`audit.log_raw_sql: false` のとき）が、履歴はそれとは別です。リテラルを管理用DBに残したくない場合は `history: false` にしてください。
+The history stores the SQL as typed (including literals) in the management database. The audit log records normalized SQL with literals removed (when `audit.log_raw_sql: false`), but the history is separate from the audit log. If you do not want literals kept in the management database, set `history: false`.
 
-## 開発
+## Development
 
-エディタの部品は [CodeMirror 6](https://codemirror.net)（MIT）で、`web/editor` のソースを esbuild で `internal/web/ui/static/editor.js` に1ファイルにまとめ、リポジトリに含めています（dbgateway のビルドに Node.js は不要です）。
+The editor component is [CodeMirror 6](https://codemirror.net) (MIT). The source in `web/editor` is bundled by esbuild into a single file, `internal/web/ui/static/editor.js`, which is committed to the repository (building dbgateway does not need Node.js).
 
 ```sh
 cd web/editor
 npm ci
-npm run build   # internal/web/ui/static/editor.js を更新
+npm run build   # updates internal/web/ui/static/editor.js
 ```
 
-CI は同じビルドをして、コミットされたファイルと一致するかを確かめます。同梱しているライブラリのライセンスは [web/editor/THIRD_PARTY_LICENSES](../web/editor/THIRD_PARTY_LICENSES) にあります。
+CI runs the same build and checks that the result matches the committed file. Licenses of the bundled libraries are in [web/editor/THIRD_PARTY_LICENSES](../web/editor/THIRD_PARTY_LICENSES).
 
-CodeMirror はスタイルを `<style>` 要素で差し込むため、このページだけ CSP に `style-src 'self' 'nonce-…'`（リクエストごとのノンス）を加えています。スクリプトは引き続き `'self'` だけです。
+CodeMirror injects styles through `<style>` elements, so this page alone adds `style-src 'self' 'nonce-…'` (a per-request nonce) to its CSP. Scripts are still limited to `'self'`.

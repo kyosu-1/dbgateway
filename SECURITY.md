@@ -21,8 +21,7 @@ disclosure timeline with you.
 ## Scope
 
 What dbgateway does and does not protect against is described in the
-"脅威モデル" (threat model) section of
-[docs/dbgateway-design.md](docs/dbgateway-design.md). In short:
+threat model section of [docs/security.md](docs/security.md). In short:
 
 - In scope: anything that lets a statement reach the database without the
   configured checks (parser bypasses, multi-statement tricks, side-effect

@@ -1,76 +1,76 @@
-# Cloud Run 検証環境（dbgateway 本体 + Cloud SQL for PostgreSQL）
+# Cloud Run test environment (dbgateway + Cloud SQL for PostgreSQL)
 
-dbgateway 本体を Cloud Run で動かし、プライベートIPの Cloud SQL for PostgreSQL 17 に IAM データベース認証（`auth: gcp_iam`）でつなぐ、使い捨ての検証環境です。MCP サーバー、Web 画面、OAuth、承認フロー、管理用DB（PostgreSQL）と監査ログ（`audit.output: postgres`）までを、エンドツーエンドで確かめるためのものです。**本番用の構成ではありません。**
+A disposable test environment that runs dbgateway on Cloud Run and connects it to a private-IP Cloud SQL for PostgreSQL 17 instance with IAM database authentication (`auth: gcp_iam`). It verifies the MCP server, the web UI, OAuth, the approval flow, the management database (PostgreSQL) and the audit log (`audit.output: postgres`) end to end. **It is not a production deployment.**
 
-このディレクトリには、アカウント固有の値を一切置きません。値はすべて変数で渡し、state は手元に置きます（git の管理外です）。
+Nothing account-specific is stored in this directory. All values are passed as variables, and the state is kept locally (it is git-ignored).
 
-## 1. 作るもの
+## 1. What it creates
 
 ```
-  テスト担当者 ──HTTPS（X-Serverless-Authorization: 担当者の ID トークン）──► Cloud Run: dbgateway（最小1台・最大2台、CPU常時割り当て）
-                                                                         │ Direct VPC egress（10.43.0.0/24、プライベート宛てのみ）
-                                                                         ▼
-  setup.sh / verify-env.sh ──パブリックIP（allowed_cidr のみ、TLS）──► Cloud SQL（PostgreSQL 17、プライベートIP: PSA 10.44.0.0/20）
-                                                                           ├ app       … 接続先（サンプルスキーマ）
-                                                                           └ dbgateway … 管理用DB・監査ログ
+  Tester ──HTTPS (X-Serverless-Authorization: tester's ID token)──► Cloud Run: dbgateway (min 1, max 2 instances, CPU always allocated)
+                                                                     │ Direct VPC egress (10.43.0.0/24, private ranges only)
+                                                                     ▼
+  setup.sh / verify-env.sh ──public IP (allowed_cidr only, TLS)──► Cloud SQL (PostgreSQL 17, private IP: PSA 10.44.0.0/20)
+                                                                       ├ app       … target database (sample schema)
+                                                                       └ dbgateway … management database, audit log
 ```
 
-| リソース | 内容 |
+| Resource | Details |
 | --- | --- |
-| API | run、sqladmin、artifactregistry、secretmanager、servicenetworking、compute（destroy しても無効化しない） |
-| VPC | 専用ネットワーク（カスタムサブネット）、Cloud Run 用サブネット `10.43.0.0/24`、プライベートサービスアクセス（PSA）用の範囲 `10.44.0.0/20` と接続 |
-| Cloud SQL | PostgreSQL 17、ENTERPRISE、db-f1-micro、ZONAL、10GB、バックアップなし、削除保護なし。プライベートIP（上の VPC）と、`allowed_cidr` だけに開いたパブリックIP。TLS 必須（`ENCRYPTED_ONLY`）、インスタンスごとの CA（`GOOGLE_MANAGED_INTERNAL_CA`）、`cloudsql.iam_authentication=on` |
-| データベース | `app`（接続先）、`dbgateway`（管理用DB と監査ログ） |
-| DB ユーザー | `dbgw_admin`（組み込み、`setup.sh` 専用）、`dbgw_store`（組み込み、`dbgateway` の所有者）、Cloud Run のサービスアカウントの IAM ユーザー |
-| サービスアカウント | Cloud Run 用。プロジェクトに `roles/cloudsql.instanceUser`（IAM ログイン）と `roles/cloudsql.client`、管理用DB の DSN のシークレットだけに `roles/secretmanager.secretAccessor` |
-| Secret Manager | 管理用DB の DSN（プライベートIP、`sslmode=verify-ca`）→ Cloud Run の環境変数 `DBGW_STORE_DSN` |
-| Artifact Registry | Docker リポジトリ `<region>-docker.pkg.dev/<project>/<name>` |
-| Cloud Run | `dbgw serve`。`image` を指定したときだけ作る。呼び出せるのは `invoker` だけ（`allUsers` は付けない） |
+| APIs | run, sqladmin, artifactregistry, secretmanager, servicenetworking, compute (not disabled on destroy) |
+| VPC | A dedicated network (custom subnets), the Cloud Run subnet `10.43.0.0/24`, and the private services access (PSA) range `10.44.0.0/20` with its connection |
+| Cloud SQL | PostgreSQL 17, ENTERPRISE, db-f1-micro, ZONAL, 10 GB, no backups, no deletion protection. A private IP (in the VPC above) and a public IP open only to `allowed_cidr`. TLS required (`ENCRYPTED_ONLY`), a per-instance CA (`GOOGLE_MANAGED_INTERNAL_CA`), `cloudsql.iam_authentication=on` |
+| Databases | `app` (target database), `dbgateway` (management database and audit log) |
+| Database users | `dbgw_admin` (built-in, only for `setup.sh`), `dbgw_store` (built-in, owner of `dbgateway`), the IAM user of the Cloud Run service account |
+| Service account | For Cloud Run. `roles/cloudsql.instanceUser` (IAM login) and `roles/cloudsql.client` on the project, and `roles/secretmanager.secretAccessor` on the management database DSN secret only |
+| Secret Manager | The management database DSN (private IP, `sslmode=verify-ca`) → the Cloud Run environment variable `DBGW_STORE_DSN` |
+| Artifact Registry | Docker repository `<region>-docker.pkg.dev/<project>/<name>` |
+| Cloud Run | `dbgw serve`. Created only when `image` is set. Only `invoker` can call it (`allUsers` is never granted) |
 
-Cloud Run には次の環境変数を渡します。設定ファイル（`templates/dbgateway.yaml.tftpl` を Terraform が展開したもの）に秘密は入っていません。
+Cloud Run receives the following environment variables. The configuration file (`templates/dbgateway.yaml.tftpl` rendered by Terraform) contains no secrets.
 
-| 環境変数 | 中身 |
+| Environment variable | Contents |
 | --- | --- |
-| `DBGW_CONFIG_YAML` | 設定ファイルの内容。`dbgw serve` は `--config` がなければこれを読みます |
-| `DBGW_DB_CA` | Cloud SQL インスタンスのサーバー CA（PEM）。接続先（`sslrootcert_env`）と管理用DB（`store.sslrootcert_env`）の両方で使います |
-| `DBGW_STORE_DSN` | 管理用DB の DSN（Secret Manager から） |
+| `DBGW_CONFIG_YAML` | The configuration file. `dbgw serve` reads it when `--config` is not given |
+| `DBGW_DB_CA` | The Cloud SQL instance's server CA (PEM). Used for both the target database (`sslrootcert_env`) and the management database (`store.sslrootcert_env`) |
+| `DBGW_STORE_DSN` | The management database DSN (from Secret Manager) |
 
-イメージの `ENTRYPOINT` は `/usr/local/bin/dbgw`、`CMD` は `serve --config /etc/dbgateway/dbgateway.yaml` です。Cloud Run の `args = ["serve"]` で `CMD` だけを置き換え、設定は `DBGW_CONFIG_YAML` から読ませます（Cloud Run の `command` は `ENTRYPOINT` を置き換えるため使いません）。
+The image's `ENTRYPOINT` is `/usr/local/bin/dbgw` and its `CMD` is `serve --config /etc/dbgateway/dbgateway.yaml`. Cloud Run's `args = ["serve"]` replaces only `CMD`, so the configuration is read from `DBGW_CONFIG_YAML` (Cloud Run's `command` would replace `ENTRYPOINT`, so it is not used).
 
-### 1.1 CPU を常時割り当て、最小1台にする理由
+### 1.1 Why CPU is always allocated with at least one instance
 
-dbgateway は、リクエストを処理していない間もバックグラウンドで動き続けます。
+dbgateway keeps working in the background while it is not serving requests:
 
-- 承認されたリクエストの実行（承認済みを探して `approved → running` にし、実行する）
-- 承認リクエスト、トークン、セッションの期限切れの処理
-- 監査ログの保存期間を過ぎた行の削除
+- running approved requests (finding approved requests, moving them from `approved` to `running`, and executing them)
+- expiring approval requests, tokens and sessions
+- deleting audit log rows past their retention period
 
-Cloud Run の既定（`cpu_idle = true`、リクエスト単位の課金）では、リクエストの外では CPU がほぼ止められ、台数も 0 まで減ります。そうなると、承認しても実行されない、期限が切れても状態が変わらない、といったことが起きます。そのため `cpu_idle = false`（CPU 常時割り当て、インスタンス単位の課金）と `min_instance_count = 1` にしています。最大2台は、複数台のときの動き（管理用DB の共有、条件付き更新による1回だけの実行）も確かめるためです（[冗長構成](../../docs/ha.md)）。
+With Cloud Run's defaults (`cpu_idle = true`, request-based billing), CPU is nearly stopped outside requests and the service scales to zero. Approved requests would then never run, and expired items would never change state. Therefore the service uses `cpu_idle = false` (CPU always allocated, instance-based billing) and `min_instance_count = 1`. The maximum of two instances is there to verify multi-instance behavior as well (a shared management database, and exactly-once execution through conditional updates; see [high availability](../../docs/ha.md)).
 
-### 1.2 読み取りと書き込みが同じ IAM ユーザーである理由
+### 1.2 Why reads and writes use the same IAM user
 
-Cloud Run のサービスはサービスアカウントを1つしか持てないため、`read_user` と `write_user` は同じ IAM ユーザーです（`setup.sh` が `app` の全テーブルに SELECT/INSERT/UPDATE/DELETE を付けます）。読み取りは引き続き READ ONLY トランザクションで実行し、読み取り用の接続には `default_transaction_read_only = on` も設定するので、読み取りの経路から書き込みはできません。ただし「最後の防衛線は GRANT」という本番の推奨（読み取り専用ユーザーを分ける）は満たしていません。本番で分けたい場合は、書き込み用にパスワード認証のユーザーを使うか、読み取りと書き込みで別のサービスを立てる構成を検討します。
+A Cloud Run service has only one service account, so `read_user` and `write_user` are the same IAM user (`setup.sh` grants SELECT/INSERT/UPDATE/DELETE on all tables in `app`). Reads still run in READ ONLY transactions, and read connections also set `default_transaction_read_only = on`, so the read path cannot write. However, this does not meet the production recommendation that database grants are the last line of defense (a separate read-only user). To separate them in production, use a password-authenticated user for writes, or run separate services for reads and writes.
 
-## 2. 費用の目安
+## 2. Cost estimate
 
-検証が終わったらその日のうちに削除してください。CPU 常時割り当ての Cloud Run が最小1台で動き続けるため、使っていなくても課金されます。
+Destroy the environment the same day you finish testing. Cloud Run with CPU always allocated keeps at least one instance running, so it is billed even when idle.
 
-- Cloud Run: 1 vCPU・512MiB を常時1台（インスタンス単位の課金）で、月に数十ドル程度（1日あたり1〜2ドル程度）
-- Cloud SQL: db-f1-micro と 10GB の SSD で、月に10ドル程度
-- そのほか Artifact Registry の保存容量、Secret Manager、ネットワークは小額
+- Cloud Run: one instance with 1 vCPU and 512 MiB, always on (instance-based billing): a few tens of dollars per month (roughly 1–2 dollars per day)
+- Cloud SQL: db-f1-micro with a 10 GB SSD: about 10 dollars per month
+- Artifact Registry storage, Secret Manager and networking: small amounts
 
-金額はおおよその目安です。実際の単価はリージョンと時期で変わるので、料金表で確認してください。
+These are rough estimates. Actual prices vary by region and over time; check the pricing pages.
 
-## 3. 手順
+## 3. Steps
 
-必要なもの: Terraform 1.6 以上、gcloud、docker、Go（リポジトリのルートで `go run` するため）、`allowed_cidr` に入るネットワークにある端末。
+Requirements: Terraform 1.6 or later, gcloud, docker, Go (for `go run` at the repository root), and a machine on a network inside `allowed_cidr`.
 
 ```sh
 cd deploy/gcp-cloudrun
-gcloud auth login                          # gcloud（deploy.sh の push、ID トークン）
-gcloud auth application-default login      # Terraform の資格情報
+gcloud auth login                          # gcloud (push in deploy.sh, ID tokens)
+gcloud auth application-default login      # credentials for Terraform
 
-# 毎回同じ変数を渡すので、シェル変数にまとめておく（ファイルには保存しない）
+# The same variables are passed every time; keep them in a shell variable (not in a file)
 TFVARS=(
   -var "project=<your-project-id>"
   -var "allowed_cidr=$(curl -fsSL https://checkip.amazonaws.com)/32"
@@ -79,46 +79,46 @@ TFVARS=(
   -var "approver_email=<approver@example.com>"
 )
 
-# 1. 初期化と、Cloud Run 以外の作成（image を空にすると Cloud Run は作らない）
+# 1. Initialize and create everything except Cloud Run (an empty image skips Cloud Run)
 terraform init
 terraform plan -out=tfplan "${TFVARS[@]}"
-#    → 計画を確認する（作られるもの、allowed_cidr、invoker）
+#    → review the plan (resources, allowed_cidr, invoker)
 terraform apply tfplan
 
-# 2. データベースの準備（サンプルスキーマ、IAM ユーザーの権限、管理用DB の所有者）
+# 2. Prepare the databases (sample schema, IAM user grants, management database owner)
 ./setup.sh
 
-# 3. イメージを linux/amd64 でビルドし、Artifact Registry に push する
+# 3. Build the image for linux/amd64 and push it to Artifact Registry
 (cd ../.. && docker build --platform linux/amd64 -t dbgateway:cloudrun-test .)
-./deploy.sh dbgateway:cloudrun-test        # 最後に次の plan/apply のコマンドを表示する（適用はしない）
+./deploy.sh dbgateway:cloudrun-test        # prints the next plan/apply commands at the end (does not apply)
 
-# 4. Cloud Run の作成（deploy.sh が表示した image を使う）
-terraform plan -out=tfplan "${TFVARS[@]}" -var "image=<deploy.sh が表示したイメージ>"
-#    → 計画を確認する
+# 4. Create Cloud Run (with the image printed by deploy.sh)
+terraform plan -out=tfplan "${TFVARS[@]}" -var "image=<image printed by deploy.sh>"
+#    → review the plan
 terraform apply tfplan
-terraform output public_url service_uri service_urls   # public_url が service_urls に含まれることを確認
+terraform output public_url service_uri service_urls   # check that public_url is in service_urls
 
-# 5. テスト用の環境変数とパスキーの登録リンク
-./verify-env.sh                            # DBGW_CLOUD_* を表示する
+# 5. Test environment variables and passkey enrollment links
+./verify-env.sh                            # prints DBGW_CLOUD_*
 
-# 6. エンドツーエンドのテスト（リポジトリのルートで、表示された環境変数を設定して）
+# 6. End-to-end tests (at the repository root, with the printed variables set)
 cd ../..
 export DBGW_CLOUD_URL=... DBGW_CLOUD_HEADER=... DBGW_CLOUD_DB=... \
        DBGW_CLOUD_ENROLL_REQUESTER=... DBGW_CLOUD_ENROLL_APPROVER=...
 go test -tags cloud -count=1 ./test/cloud/
 cd deploy/gcp-cloudrun
 
-# 7. 削除（image は作成時と同じ値を渡す）
-terraform plan -destroy -out=tfplan "${TFVARS[@]}" -var "image=<同じイメージ>"
-#    → 削除するものを確認する
+# 7. Destroy (pass the same image as at creation)
+terraform plan -destroy -out=tfplan "${TFVARS[@]}" -var "image=<same image>"
+#    → review what will be destroyed
 terraform apply tfplan
 ```
 
-- `setup.sh` は Cloud Run を作る**前に**実行します。dbgateway は起動時に管理用DB にテーブルを作りますが、`dbgw_store` が `dbgateway` データベースを所有する（または権限を持つ）までは作れず、起動に失敗して Cloud Run の作成（`terraform apply`）も失敗するためです。何度実行しても問題ありません
-- `deploy.sh` は毎回違うタグで push し、ダイジェストで固定したイメージ名を表示します。イメージを変えて 4 をやり直すと、新しいリビジョンに切り替わります
-- 設定（`templates/dbgateway.yaml.tftpl`、利用者のメールアドレス）を変えたときも 4 の plan/apply で反映します
+- Run `setup.sh` **before** creating Cloud Run. dbgateway creates its tables in the management database at startup, but it cannot do so until `dbgw_store` owns (or has privileges on) the `dbgateway` database; startup would fail, and so would creating Cloud Run (`terraform apply`). It is safe to run repeatedly
+- `deploy.sh` pushes with a new tag each time and prints the image name pinned by digest. Repeating step 4 with a new image switches to a new revision
+- Changes to the configuration (`templates/dbgateway.yaml.tftpl`, user email addresses) are also applied with the plan/apply of step 4
 
-### 3.1 `verify-env.sh` が表示するもの
+### 3.1 What `verify-env.sh` prints
 
 ```
 DBGW_CLOUD_URL=https://<name>-<project number>.<region>.run.app
@@ -128,40 +128,40 @@ DBGW_CLOUD_ENROLL_REQUESTER=https://.../passkeys/enroll/...
 DBGW_CLOUD_ENROLL_APPROVER=https://.../passkeys/enroll/...
 ```
 
-- `DBGW_CLOUD_URL` は設定の `server.public_url`（Cloud Run の決定的 URL）です。OAuth の issuer やリダイレクト先、パスキー（WebAuthn）のオリジンはこの URL から作るため、もう一方の URL（`service_uri`、`https://<name>-<ハッシュ>.a.run.app`）では動きません。Cloud Run がこの URL を割り当てていない場合は警告を出します
-- 登録リンクは、手元から管理用DB にパブリックIP で接続し、`dbgw passkey enroll --config env:DBGW_CONFIG_YAML` で作ります（`store_dsn_public` と `cloudsql-server-ca.pem` を使います）。リンクの URL は設定の `public_url` から作られます。有効期限は24時間で、1回だけ使えます
-- `DBGW_CLOUD_HEADER` の `$(...)` は展開せずに表示します。テストを実行するシェルで展開してください（ID トークンの有効期限は1時間です）
+- `DBGW_CLOUD_URL` is `server.public_url` from the configuration (Cloud Run's deterministic URL). The OAuth issuer, redirect URIs and the passkey (WebAuthn) origin are derived from this URL, so the other URL (`service_uri`, `https://<name>-<hash>.a.run.app`) does not work. A warning is printed if Cloud Run has not assigned this URL
+- The enrollment links are created by connecting to the management database over the public IP from your machine and running `dbgw passkey enroll --config env:DBGW_CONFIG_YAML` (using `store_dsn_public` and `cloudsql-server-ca.pem`). Link URLs are built from `public_url` in the configuration. They are valid for 24 hours and can be used once
+- The `$(...)` in `DBGW_CLOUD_HEADER` is printed unexpanded. Expand it in the shell that runs the tests (ID tokens are valid for one hour)
 
-### 3.2 Cloud Run の認証と dbgateway の認証
+### 3.2 Cloud Run authentication and dbgateway authentication
 
-Cloud Run は `roles/run.invoker` を持つ人のリクエストだけを通します（`allUsers` には付けません）。dbgateway 自身も `Authorization: Bearer` で OAuth のトークンを受け取るため、Cloud Run 用の ID トークンは `X-Serverless-Authorization` ヘッダーで送ります。Cloud Run のドキュメントでは、両方のヘッダーがあると `X-Serverless-Authorization` だけを検査し、その署名を取り除いてからコンテナに渡すとされています。`Authorization` はそのままコンテナ（dbgateway）に届きます。
+Cloud Run passes only requests from principals with `roles/run.invoker` (`allUsers` is never granted). dbgateway itself receives OAuth tokens in `Authorization: Bearer`, so the ID token for Cloud Run is sent in the `X-Serverless-Authorization` header. According to the Cloud Run documentation, when both headers are present, only `X-Serverless-Authorization` is checked and its signature is removed before the request reaches the container. `Authorization` reaches the container (dbgateway) unchanged.
 
-- `gcloud auth print-identity-token` で取る人の ID トークンには、Cloud Run の URL を示す audience が入っていません。Cloud Run は開発者の呼び出しとしてこれを受け付けますが、ドキュメントでは「リプレイ攻撃を受けやすいので開発用」とされています。人のアカウントでは `--audiences` は指定できません（サービスアカウントの権限借用のときだけ使えます）。自動化するときは、サービスアカウントの ID トークンを audience に URL を指定して発行します
-- ブラウザは任意のヘッダーを付けられないため、そのままでは Web 画面やパスキーの登録リンクを開けません（403 になります）。ブラウザで試すなら、ヘッダーを付ける拡張機能などを使います。`gcloud run services proxy` は `http://localhost:8080` で中継しますが、オリジンが `public_url` と違うため、ログインやパスキーは動きません
+- A user's ID token from `gcloud auth print-identity-token` has no audience naming the Cloud Run URL. Cloud Run accepts it as a developer invocation, but the documentation describes this as "for development, susceptible to replay attacks". `--audiences` cannot be used with user accounts (only when impersonating a service account). For automation, issue a service account's ID token with the URL as its audience
+- Browsers cannot add arbitrary headers, so the web UI and passkey enrollment links cannot be opened directly (they return 403). To try them in a browser, use something like a header-injecting extension. `gcloud run services proxy` relays on `http://localhost:8080`, but the origin differs from `public_url`, so sign-in and passkeys do not work
 
-## 4. 削除について
+## 4. Notes on destroying
 
-- データベースと DB ユーザーは `deletion_policy = "ABANDON"` で、インスタンスと一緒に消えます（先に消そうとすると、`setup.sh` が作ったオブジェクトや権限のために失敗するため）
-- PSA の接続（`google_service_networking_connection`）も `deletion_policy = "ABANDON"` です。Cloud SQL を削除した直後は、サービス側の後片付けが終わっておらず、接続の削除が「Producer services ... are still using this connection」で失敗することがよくあるためです。接続は state から外れるだけで、VPC ネットワークの削除とともに消えます
-- **サブネットの削除は、Cloud Run を消した後もしばらく失敗します。** Direct VPC egress が使った IP アドレス（`serverless-ipv4-...`）は Cloud Run が自動で解放しますが、サービスの削除から解放まで時間がかかります（検証では数十分以上）。「`subnetwork ... is already being used by ... addresses/serverless-ipv4-...`」で失敗したら、残るのはネットワークとサブネット（料金はかかりません）だけなので、次で解放を確かめてから同じ `plan -destroy` / `apply` をやり直します: `gcloud compute addresses list --project <project> --filter="name~^serverless-ipv4"`
-- それでもネットワークや PSA の範囲の削除が「使用中」で失敗した場合は、しばらく（数分〜数十分）待ってから同じ `plan -destroy` / `apply` をやり直します。急ぐ場合は `gcloud compute networks peerings delete servicenetworking-googleapis-com --network=<name>` でピアリングを消してからやり直します
-- Cloud SQL のインスタンス名には乱数の接尾辞を付けています（削除した名前はしばらく再利用できないため）
-- Artifact Registry のリポジトリは中のイメージごと削除されます
-- 有効にした API は無効にしません
+- Databases and database users use `deletion_policy = "ABANDON"` and are removed with the instance (deleting them first fails because of objects and grants created by `setup.sh`)
+- The PSA connection (`google_service_networking_connection`) also uses `deletion_policy = "ABANDON"`. Right after Cloud SQL is deleted, the service-side cleanup is often not finished, and deleting the connection frequently fails with "Producer services ... are still using this connection". The connection is only removed from the state, and disappears with the VPC network
+- **Deleting the subnet keeps failing for a while after Cloud Run is gone.** Cloud Run releases the IP addresses used by Direct VPC egress (`serverless-ipv4-...`) automatically, but it takes time after the service is deleted (tens of minutes or more in testing). If it fails with "`subnetwork ... is already being used by ... addresses/serverless-ipv4-...`", only the network and subnet remain (they cost nothing); confirm the addresses are released with `gcloud compute addresses list --project <project> --filter="name~^serverless-ipv4"`, then repeat the same `plan -destroy` / `apply`
+- If deleting the network or the PSA range still fails with "in use", wait a while (minutes to tens of minutes) and repeat the same `plan -destroy` / `apply`. If you are in a hurry, delete the peering with `gcloud compute networks peerings delete servicenetworking-googleapis-com --network=<name>` and retry
+- The Cloud SQL instance name has a random suffix (deleted names cannot be reused for a while)
+- The Artifact Registry repository is deleted together with its images
+- Enabled APIs are not disabled
 
-## 5. セキュリティ上の注意
+## 5. Security notes
 
-- Cloud SQL のパブリックIP は `allowed_cidr` だけに開いています（`0.0.0.0/0` は変数の検証で拒否します）。`setup.sh` と `verify-env.sh` 以外では使いません。dbgateway はプライベートIP で接続します
-- TLS はサーバー CA の検証つき（`verify-ca`）です。インスタンスごとの CA のサーバー証明書には IP の SAN がないため `verify-full` は使えませんが、CA がそのインスタンス専用なので、CA の検証でサーバーの身元も確かめられます。`dbgw config validate` は `env: prod` の DB で `verify-full` 以外を使うと警告を出しますが、この構成では想定どおりです
-- dbgateway の DB 接続はパスワードを使わず、Cloud Run のサービスアカウントの IAM 認証です。管理用DB の DSN（`dbgw_store` のパスワード）だけを Secret Manager に置き、そのシークレットだけを読めるようにしています
-- `roles/cloudsql.instanceUser` と `roles/cloudsql.client` はプロジェクト単位で付けています。検証専用のプロジェクトで使ってください（`cloudsql.client` は dbgateway の直接接続には不要で、Auth Proxy での調査用です）
-- Terraform の state には、DB のパスワードと DSN が平文で入ります。state と `tfplan`、`cloudsql-server-ca.pem` は git の管理外です。共有しないでください
-- サンプルスキーマが作る `dbgw_reader`（開発用の既知のパスワード）は、`setup.sh` がログインできないようにします
-- 接続先と管理用DB が同じインスタンスにあるのは検証用の簡略化です。本番では分けます（[冗長構成](../../docs/ha.md)）
-- 使い終わったら必ず削除します
+- The Cloud SQL public IP is open only to `allowed_cidr` (`0.0.0.0/0` is rejected by variable validation). It is used only by `setup.sh` and `verify-env.sh`; dbgateway connects over the private IP
+- TLS verifies the server CA (`verify-ca`). A server certificate from a per-instance CA has no IP SAN, so `verify-full` cannot be used, but because the CA is dedicated to the instance, CA verification also establishes the server's identity. `dbgw config validate` warns when a database with `env: prod` uses anything other than `verify-full`; in this setup that is expected
+- dbgateway's database connections use no passwords but IAM authentication as the Cloud Run service account. Only the management database DSN (with the `dbgw_store` password) is stored in Secret Manager, and only that secret is readable
+- `roles/cloudsql.instanceUser` and `roles/cloudsql.client` are granted at the project level. Use a project dedicated to testing (`cloudsql.client` is not needed for dbgateway's direct connections; it is for investigating through the Auth Proxy)
+- The Terraform state contains the database passwords and DSN in plain text. The state, `tfplan` and `cloudsql-server-ca.pem` are git-ignored. Do not share them
+- `setup.sh` prevents `dbgw_reader` (created by the sample schema with a well-known development password) from logging in
+- Having the target database and the management database on the same instance is a simplification for testing. Separate them in production ([high availability](../../docs/ha.md))
+- Always destroy the environment when you are done
 
-## 6. 変数と出力
+## 6. Variables and outputs
 
-変数: `project`（必須）、`region`（既定 `asia-northeast1`）、`name`（既定 `dbgw-run-test`。Cloud Run のサービス名で、ほかのリソース名の接頭辞）、`allowed_cidr`（必須、`0.0.0.0/0` は不可）、`invoker`（必須、`user:someone@example.com` の形式。`allUsers` などは不可）、`image`（既定は空。空なら Cloud Run を作らない）、`requester_email`・`approver_email`（必須、設定の固定グループ `developers`・`approvers` の唯一のメンバー）。
+Variables: `project` (required), `region` (default `asia-northeast1`), `name` (default `dbgw-run-test`; the Cloud Run service name and the prefix for other resource names), `allowed_cidr` (required; `0.0.0.0/0` is not allowed), `invoker` (required, in the form `user:someone@example.com`; `allUsers` and similar are not allowed), `image` (empty by default; when empty, Cloud Run is not created), `requester_email` and `approver_email` (required; the only members of the fixed groups `developers` and `approvers` in the configuration).
 
-出力: `public_url`、`service_uri`、`service_urls`、`artifact_repository`、`service_account_email`、`iam_db_user`、`sql_instance_name`、`sql_public_ip`、`sql_private_ip`、`server_ca_cert`（sensitive）、`admin_password`（sensitive）、`store_password`（sensitive）、`store_dsn_public`（sensitive）、`dbgateway_config`、`requester_email`、`approver_email`。
+Outputs: `public_url`, `service_uri`, `service_urls`, `artifact_repository`, `service_account_email`, `iam_db_user`, `sql_instance_name`, `sql_public_ip`, `sql_private_ip`, `server_ca_cert` (sensitive), `admin_password` (sensitive), `store_password` (sensitive), `store_dsn_public` (sensitive), `dbgateway_config`, `requester_email`, `approver_email`.

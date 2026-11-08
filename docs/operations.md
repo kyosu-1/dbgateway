@@ -1,58 +1,60 @@
-# dbgateway 運用手順
+# Operations
 
-本番の PostgreSQL の前に dbgateway を置いて運用するための手順です。対象は次の5つです。
+How to run dbgateway in front of production PostgreSQL. This guide covers:
 
-1. クラウドの IAM 認証で DB に接続する（Amazon RDS / Cloud SQL）
-2. 監査ログを OpenTelemetry で外部に転送する
-3. 監査ログの保存期間と改ざん検証
-4. 緊急迂回経路（dbgateway を通らない直接接続）の手順
-5. Web画面の本人確認（パスキーとステップアップ）と閲覧権限
+1. Connecting to databases with cloud IAM authentication (Amazon RDS / Cloud SQL)
+2. Forwarding the audit log with OpenTelemetry
+3. Audit log retention and tamper verification
+4. The emergency bypass (direct database access without dbgateway)
+5. Identity checks in the web UI (passkeys and step-up authentication) and access to audit pages
 
-設定項目の全体は [設計ドキュメント](dbgateway-design.md) と [フェーズ2〜4 詳細設計](design-phase2-4.md) を参照してください。以下で `<...>` はそれぞれの環境の値に置き換えます。
+For every configuration key, see the [configuration reference](configuration.md). Replace each `<...>` below with the value for your environment.
 
-## 1. IAM 認証
+## 1. IAM authentication
 
-dbgateway は、接続先ごとに `auth` で認証方式を選びます。
+Each database endpoint selects its authentication method with `auth`.
 
-| `auth` | パスワードの代わりに使うもの | 資格情報の探し方 |
+| `auth` | Used instead of a password | Where credentials come from |
 | --- | --- | --- |
-| `password` | `password_env` で指定した環境変数の値 | — |
-| `aws_iam` | RDS の認証トークン（15分有効） | AWS SDK の標準の探索順（環境変数、プロファイル、ECS タスクロール、EKS Pod Identity / IRSA、EC2 インスタンスプロファイル） |
-| `gcp_iam` | Google の OAuth 2.0 アクセストークン（1時間有効） | アプリケーションのデフォルト認証情報（ADC）。GKE の Workload Identity、GCE のサービスアカウントなど |
+| `password` | The value of the environment variable named by `password_env` | — |
+| `aws_iam` | An RDS authentication token (valid 15 minutes) | The standard AWS SDK chain (environment variables, profile, ECS task role, EKS Pod Identity / IRSA, EC2 instance profile) |
+| `gcp_iam` | A Google OAuth 2.0 access token (valid 1 hour) | Application Default Credentials (ADC), e.g. GKE Workload Identity or a GCE service account |
 
-共通の動き:
+IAM authentication is available for PostgreSQL databases only; MySQL supports `auth: password` (see [mysql.md](mysql.md)).
 
-- トークンは、新しい物理接続を張るたびに `BeforeConnect` で取得し、パスワードとして送ります。毎回発行しないように、残りの有効期間が5分を切るまで使い回します（RDS は発行から10分、Google はトークンの期限の5分前まで）。DB はログイン時だけトークンを確認するので、確立済みの接続はトークンの期限が切れても使えます
-- トークンが取れないときは接続しません（パスワード認証に切り替えることはしません）
-- TLS が必須です。`sslmode` は `verify-full`（Cloud SQL の個別CAなら `verify-ca`）にします。`disable`、`allow`、`prefer` は平文に落ちる可能性があるため設定の検証で拒否します。`require` は証明書を検証しないため、トークンを盗まれるおそれがあるとして警告します
-- `password_env`、`write_password_env` は一緒に設定できません
-- 書き込み用ユーザー（`write_user`）にも同じ方式が使われます。書き込み用ユーザーにも IAM ログインの権限を付けてください
+Common behavior:
 
-### 1.1 Amazon RDS / Aurora（`aws_iam`）
+- A token is fetched in `BeforeConnect` each time a new physical connection is opened and sent as the password. Tokens are reused until less than 5 minutes of validity remain (RDS: 10 minutes after issue; Google: until 5 minutes before the token expires). The database checks the token only at login, so established connections keep working after the token expires.
+- If no token can be obtained, the connection fails. There is no fallback to password authentication.
+- TLS is required. Set `sslmode` to `verify-full` (or `verify-ca` for a Cloud SQL per-instance CA). Configuration validation rejects `disable`, `allow` and `prefer`, which can fall back to plaintext. `require` produces a warning because it does not verify the server certificate, so the token could be intercepted.
+- `password_env` and `write_password_env` cannot be set together with an IAM method.
+- The write user (`write_user`) uses the same method. Grant IAM login to the write user as well.
 
-**1. インスタンスで IAM 認証を有効にする**
+### 1.1 Amazon RDS / Aurora (`aws_iam`)
+
+**1. Enable IAM authentication on the instance**
 
 ```sh
 aws rds modify-db-instance --db-instance-identifier <instance> \
   --enable-iam-database-authentication --apply-immediately
 ```
 
-Terraform では `iam_database_authentication_enabled = true` です（[deploy/aws](../deploy/aws) の `iam_auth` 変数）。
+In Terraform this is `iam_database_authentication_enabled = true` (the `iam_auth` variable in [deploy/aws](../deploy/aws)).
 
-**2. DB ユーザーを作る**（管理者ユーザーで接続して実行）
+**2. Create the database user** (connect as an administrator)
 
 ```sql
-CREATE USER dbgw_iam;                -- パスワードは付けない
-GRANT rds_iam TO dbgw_iam;           -- IAM 認証でのログインを許可
+CREATE USER dbgw_iam;                -- no password
+GRANT rds_iam TO dbgw_iam;           -- allow IAM login
 GRANT CONNECT ON DATABASE <db> TO dbgw_iam;
 GRANT USAGE ON SCHEMA public TO dbgw_iam;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dbgw_iam;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dbgw_iam;
 ```
 
-`rds_iam` を付けたユーザーはパスワードではログインできなくなります。読み取り用の最後の防御は GRANT なので、読み取り用ユーザーには SELECT 以外を付けません。
+A user with `rds_iam` can no longer log in with a password. GRANTs are the last line of defense for reads, so give the read user nothing beyond SELECT.
 
-**3. dbgateway の実行ロールに `rds-db:connect` を許可する**
+**3. Allow `rds-db:connect` for dbgateway's runtime role**
 
 ```json
 {
@@ -70,9 +72,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dbgw_iam;
 }
 ```
 
-`<DbiResourceId>` はインスタンスの「リソースID」（`db-` で始まる値。`aws rds describe-db-instances --query 'DBInstances[].DbiResourceId'`）で、インスタンス名ではありません。Aurora ではクラスターのリソースID（`cluster-` で始まる値）を使います。
+`<DbiResourceId>` is the instance's resource ID (starts with `db-`; `aws rds describe-db-instances --query 'DBInstances[].DbiResourceId'`), not the instance name. For Aurora, use the cluster resource ID (starts with `cluster-`).
 
-**4. dbgateway の設定**
+**4. Configure dbgateway**
 
 ```yaml
 databases:
@@ -80,22 +82,22 @@ databases:
     primary:
       host: <instance>.<id>.<region>.rds.amazonaws.com
       auth: aws_iam
-      region: <region>            # 省略時は AWS_REGION などの標準の設定
+      region: <region>            # default: the standard AWS config (AWS_REGION, etc.)
       read_user: dbgw_iam
       sslmode: verify-full
       sslrootcert: /etc/dbgateway/rds-global-bundle.pem
 ```
 
-CA は `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` から取得します。`host` と `port` はトークンの署名に含まれるため、CNAME などの別名ではなく RDS のエンドポイント名をそのまま書きます。
+Download the CA bundle from `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`. `host` and `port` are part of the token signature, so use the RDS endpoint name itself, not a CNAME or other alias.
 
-注意:
+Notes:
 
-- IAM 認証の新規接続数には上限があります（AWS は毎秒数百を超える新規接続には推奨していません）。dbgateway はプールで接続を使い回すので通常は問題になりませんが、多数のインスタンスを同時に再起動するときは気にかけてください
-- `rds.force_ssl=1` をパラメータグループに設定し、DB 側でも平文の接続を拒否します
+- IAM authentication limits the rate of new connections (AWS does not recommend it above a few hundred new connections per second). dbgateway pools connections, so this is normally not an issue, but keep it in mind when restarting many instances at once.
+- Set `rds.force_ssl=1` in the parameter group so the database also rejects plaintext connections.
 
-### 1.2 Cloud SQL for PostgreSQL（`gcp_iam`）
+### 1.2 Cloud SQL for PostgreSQL (`gcp_iam`)
 
-**1. インスタンスで IAM 認証を有効にし、TLS を必須にする**
+**1. Enable IAM authentication and require TLS**
 
 ```sh
 gcloud sql instances patch <instance> \
@@ -103,18 +105,18 @@ gcloud sql instances patch <instance> \
   --ssl-mode=ENCRYPTED_ONLY
 ```
 
-`--database-flags` は既存のフラグを置き換えるので、他のフラグがあるときは一緒に指定します。dbgateway はクライアント証明書を使わずに直接接続するため、`ssl_mode` は `ENCRYPTED_ONLY` にします（`TRUSTED_CLIENT_CERTIFICATE_REQUIRED` では接続できません）。
+`--database-flags` replaces the existing flags, so include any other flags you already have. dbgateway connects directly without a client certificate, so use `ENCRYPTED_ONLY` (`TRUSTED_CLIENT_CERTIFICATE_REQUIRED` does not work).
 
-**2. IAM ユーザーを DB に登録する**
+**2. Register the IAM user in the database**
 
 ```sh
-# サービスアカウント（推奨）。DB ユーザー名はメールアドレスから .gserviceaccount.com を除いたもの
+# Service account (recommended). The database user name is the email without .gserviceaccount.com
 gcloud sql users create dbgw@<project>.iam --instance=<instance> --type=cloud_iam_service_account
-# 人のアカウントの場合（検証用）
+# A person's account (for testing)
 gcloud sql users create <user@example.com> --instance=<instance> --type=cloud_iam_user
 ```
 
-登録しただけでは権限がないので、管理者ユーザーで GRANT します（ユーザー名は二重引用符で囲む）。
+A registered user has no privileges yet. GRANT them as an administrator (quote the user name).
 
 ```sql
 GRANT CONNECT ON DATABASE <db> TO "dbgw@<project>.iam";
@@ -123,12 +125,12 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO "dbgw@<project>.iam";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "dbgw@<project>.iam";
 ```
 
-**3. IAM ロールを付ける**
+**3. Grant IAM roles**
 
-| ロール | 用途 |
+| Role | Purpose |
 | --- | --- |
-| `roles/cloudsql.instanceUser` | IAM データベース認証でのログイン（`cloudsql.instances.login`）。必須 |
-| `roles/cloudsql.client` | Cloud SQL Auth Proxy やコネクタでの接続、インスタンス情報の取得。dbgateway の直接接続には不要だが、運用で Auth Proxy を使うなら付ける |
+| `roles/cloudsql.instanceUser` | Login with IAM database authentication (`cloudsql.instances.login`). Required |
+| `roles/cloudsql.client` | Connecting through the Cloud SQL Auth Proxy or connectors, and reading instance metadata. Not needed for dbgateway's direct connection; grant it if you use the Auth Proxy in operations |
 
 ```sh
 gcloud projects add-iam-policy-binding <project> \
@@ -137,91 +139,91 @@ gcloud projects add-iam-policy-binding <project> \
   --member=serviceAccount:dbgw@<project>.iam.gserviceaccount.com --role=roles/cloudsql.client
 ```
 
-**4. サーバー証明書の CA と sslmode**
+**4. Server CA and sslmode**
 
-Cloud SQL のサーバー証明書は、CA の方式によって中身が違います。
+The Cloud SQL server certificate depends on the CA mode.
 
-| `server_ca_mode` | サーバー証明書 | 使う sslmode | `host` |
+| `server_ca_mode` | Server certificate | sslmode | `host` |
 | --- | --- | --- | --- |
-| `GOOGLE_MANAGED_INTERNAL_CA`（インスタンスごとのCA、既定） | `CN=<project>:<instance>`。IP アドレスの SAN はない（PSC のときだけ DNS 名が入る） | `verify-ca`。CA がそのインスタンス専用なので、CA の検証でサーバーの身元も確かめられる | IP アドレス |
-| `GOOGLE_MANAGED_CAS_CA`（共有CA） | SAN にインスタンスの DNS 名（`<uid>.<project-dns-label>.<region>.sql.goog`） | `verify-full`。CA が共有なのでホスト名の検証が必要 | DNS 名（DNS レコードは自分で作る） |
+| `GOOGLE_MANAGED_INTERNAL_CA` (per-instance CA, default) | `CN=<project>:<instance>`. No IP SAN (a DNS name only with PSC) | `verify-ca`. The CA is dedicated to the instance, so verifying the CA also verifies the server's identity | IP address |
+| `GOOGLE_MANAGED_CAS_CA` (shared CA) | SAN contains the instance DNS name (`<uid>.<project-dns-label>.<region>.sql.goog`) | `verify-full`. The CA is shared, so the host name must be verified | DNS name (create the DNS record yourself) |
 
 ```sh
-# インスタンスごとのCA
+# Per-instance CA
 gcloud sql instances describe <instance> --format='value(serverCaCert.cert)' > server-ca.pem
-# 共有CA
+# Shared CA
 gcloud sql ssl server-certs list --instance=<instance> --format='value(ca_cert.cert)' > server-ca.pem
 ```
 
-CA をローテーションするときは、新旧両方の CA を1つのファイルに並べて `sslrootcert` に指定し、切り替え後に古い方を外します（`gcloud sql ssl server-ca-certs list`）。
+To rotate the CA, put both the old and new CA in one file for `sslrootcert`, and remove the old one after the switch (`gcloud sql ssl server-ca-certs list`).
 
-**5. dbgateway の設定**
+**5. Configure dbgateway**
 
 ```yaml
 databases:
   - name: prod-analytics
     primary:
-      host: 10.20.0.5              # プライベートIP（推奨）
+      host: 10.20.0.5              # private IP (recommended)
       auth: gcp_iam
       read_user: dbgw@<project>.iam
       sslmode: verify-ca
       sslrootcert: /etc/dbgateway/cloudsql-server-ca.pem
 ```
 
-注意:
+Notes:
 
-- 資格情報は ADC から取ります。GKE では Workload Identity、GCE では VM のサービスアカウントを使い、サービスアカウントキーのファイルは使いません。トークンは `https://www.googleapis.com/auth/sqlservice.login` のスコープで要求します（Cloud SQL の Go コネクタと同じスコープ。人の ADC やメタデータサーバーのトークンはスコープの指定が無視され、`cloud-platform` のトークンになりますが、ログインに使えます）
-- 手元で人の ADC を使って試すときは、`gcloud auth application-default login` を、Cloud SQL の IAM ユーザーと同じアカウントで実行し直してください。ADC が別のアカウントのものだったり古かったりすると、`Cloud IAM user authentication failed`（SQLSTATE 28000）で拒否されます（gcloud のログインと ADC は別の資格情報です）
-- ユーザー名は小文字だけです。サービスアカウントのメールアドレスをそのまま書くと設定の検証でエラーになります
-- 本番ではパブリックIPではなく、プライベートIP（プライベートサービスアクセスまたは PSC）で接続します
+- Credentials come from ADC. Use Workload Identity on GKE and the VM service account on GCE; do not use service account key files. Tokens are requested with the `https://www.googleapis.com/auth/sqlservice.login` scope (the same scope as the Cloud SQL Go connector). User ADC and metadata-server tokens ignore the requested scope and return a `cloud-platform` token, which also works for login.
+- When testing locally with your own ADC, rerun `gcloud auth application-default login` with the same account as the Cloud SQL IAM user. If ADC belongs to another account or is stale, login fails with `Cloud IAM user authentication failed` (SQLSTATE 28000). The gcloud login and ADC are separate credentials.
+- User names are lowercase only. Writing the full service account email fails configuration validation.
+- In production, connect over a private IP (Private Service Access or PSC), not a public IP.
 
-**Cloud SQL Go コネクタを使わない理由**
+**Why not the Cloud SQL Go connector**
 
-`cloud.google.com/go/cloudsqlconn` を pgx の `DialFunc` に組み込む方法もありますが、採用していません。直接の TLS 接続で十分に安全に検証でき（上の表）、コネクタを使うと Cloud SQL Admin API の有効化と `roles/cloudsql.client`、Admin API への通信経路、依存ライブラリの追加が必要になり、DB 以外の障害点が増えるためです。PSC や共有CAでホスト名の検証が難しい構成が必要になったら、`instance_connection_name` の設定とコネクタの追加を検討します。
+dbgateway does not plug `cloud.google.com/go/cloudsqlconn` into pgx's `DialFunc`. A direct TLS connection can be verified securely (see the table above), while the connector would require the Cloud SQL Admin API, `roles/cloudsql.client`, a network path to the Admin API and extra dependencies, adding failure points outside the database. If a setup where host name verification is hard (PSC, shared CA) becomes necessary, an `instance_connection_name` setting and the connector may be added.
 
-### 1.3 検証環境での確認
+### 1.3 Testing in a disposable environment
 
-`deploy/aws`（RDS）と `deploy/gcp`（Cloud SQL）に、使い捨ての検証環境の Terraform があります。`setup.sh` が最後に表示するコマンドで、`TestIAMIntegration` が IAM 認証でログインして `current_user` を確かめます。手順は各ディレクトリの README を参照してください。使い終わったら必ず `terraform destroy` します。
+`deploy/aws` (RDS) and `deploy/gcp` (Cloud SQL) contain Terraform for disposable test environments. The command printed at the end of `setup.sh` runs `TestIAMIntegration`, which logs in with IAM authentication and checks `current_user`. See the README in each directory. Always run `terraform destroy` when you are done.
 
-## 2. 監査ログの OpenTelemetry 転送
+## 2. Forwarding the audit log with OpenTelemetry
 
 ```yaml
 audit:
-  output: file                    # 主の出力先
+  output: file                    # primary output
   dir: /var/lib/dbgateway/audit
   otlp:
-    endpoint: otel-collector.internal:4317   # host:port（スキームは書かない）
-    insecure: false                          # true は同じホストのコレクターに限る
-    headers_env: DBGW_OTLP_HEADERS           # 任意。gRPC メタデータ
+    endpoint: otel-collector.internal:4317   # host:port (no scheme)
+    insecure: false                          # true only for a collector on the same host
+    headers_env: DBGW_OTLP_HEADERS           # optional; gRPC metadata
 ```
 
-**動き**
+**Behavior**
 
-- リクエストの成否は主の出力先（file / stdout）だけで決まります。主の出力先に書けなければ結果を返しません（失敗したら止める）
-- 転送は補助です。主の出力先に書けた行を、転送先ごとの上限つきキュー（4096件）に入れ、別のゴルーチンが最大256件ずつ OTLP/gRPC で送ります。キューが一杯のときや送信に失敗したときは、その行の転送を諦め、件数を数えて最大1分に1回ログに出します（`audit forwarder queue full; entry dropped`、`audit forwarding failed`）。停止時には送信済み・破棄・失敗の合計を出します
-- コレクターに届かなくても起動は止めません（接続は遅延して張ります）。`headers_env` の環境変数が無いときは起動を止めます
-- TLS はシステムの CA で検証します。社内CAのコレクターでは、`OTEL_EXPORTER_OTLP_CERTIFICATE` に CA ファイルを指定できます（OpenTelemetry の標準の環境変数も効きます）
+- Only the primary output (file / stdout / postgres) decides whether a request succeeds. If the primary output cannot be written, no result is returned (fail closed).
+- Forwarding is best effort. Each line written to the primary output is put on a bounded queue per forwarder (4096 entries), and a separate goroutine sends up to 256 entries at a time over OTLP/gRPC. When the queue is full or a send fails, the line is dropped from forwarding; drops are counted and logged at most once per minute (`audit forwarder queue full; entry dropped`, `audit forwarding failed`). On shutdown, totals for sent, dropped and failed entries are logged.
+- An unreachable collector does not block startup (the connection is opened lazily). A missing `headers_env` variable does block startup.
+- TLS is verified against the system CAs. For a collector with an internal CA, set `OTEL_EXPORTER_OTLP_CERTIFICATE` to the CA file (the standard OpenTelemetry environment variables apply).
 
-`headers_env` の値は `key=value` をカンマで区切ったもので、値は URL エンコードします。
+The `headers_env` value is a comma-separated list of `key=value` pairs with URL-encoded values.
 
 ```sh
 export DBGW_OTLP_HEADERS='authorization=Bearer%20<token>,x-tenant=<tenant>'
 ```
 
-**送るログレコード**
+**Log records**
 
-| 項目 | 内容 |
+| Field | Content |
 | --- | --- |
-| 本文（body） | 監査ログの1行そのもの（JSON、`hash` を含む）。受け取った側でハッシュを再計算できる |
-| 属性 | 各項目を `dbgw.` の下に平らにしたもの。例: `dbgw.request_id`、`dbgw.principal.human`、`dbgw.principal.agent`、`dbgw.database`、`dbgw.decision`、`dbgw.rule`、`dbgw.analysis.tables`（文字列の配列）、`dbgw.result.rows`、`dbgw.hash`、`dbgw.prev_hash`。SQL の文面は本文だけに入れ、属性にはしない |
-| 時刻 | 監査ログの `ts` |
-| イベント名 | `dbgateway.audit` |
-| 重要度 | `deny` と `error` は WARN、それ以外は INFO |
-| リソース | `service.name=dbgateway` |
+| Body | The audit log line itself (JSON, including `hash`). The receiver can recompute the hash |
+| Attributes | Each field flattened under `dbgw.`, e.g. `dbgw.request_id`, `dbgw.principal.human`, `dbgw.principal.agent`, `dbgw.database`, `dbgw.decision`, `dbgw.rule`, `dbgw.analysis.tables` (string array), `dbgw.result.rows`, `dbgw.hash`, `dbgw.prev_hash`. The SQL text is in the body only, not in attributes |
+| Timestamp | The audit log `ts` |
+| Event name | `dbgateway.audit` |
+| Severity | WARN for `deny` and `error`, INFO otherwise |
+| Resource | `service.name=dbgateway` |
 
-監査ログには結果の値が入らないので、転送先にも入りません。SQL のリテラルは既定で伏せてあります（`log_raw_sql: false`）。
+The audit log contains no result values, so neither does the forwarded data. SQL literals are redacted by default (`log_raw_sql: false`).
 
-**コレクターの例**（SIEM へはコレクター経由で送る）
+**Collector example** (send to a SIEM through a collector)
 
 ```yaml
 receivers:
@@ -245,69 +247,71 @@ service:
       exporters: [otlphttp/siem]
 ```
 
-転送は補助のため、件数が欠けることがあります。正本は主の出力先です。SIEM 側では `dbgw.prev_hash` と `dbgw.hash` のつながりで欠けを見つけられます。
+Forwarding is best effort, so entries can be missing. The primary output is the source of truth. In the SIEM, gaps show up as breaks in the `dbgw.prev_hash` → `dbgw.hash` chain.
 
-## 3. 監査ログの保存と検証
+## 3. Audit log retention and verification
 
-**保存**
+See [masking-and-audit.md](masking-and-audit.md) for the audit log format and hash chain.
 
-- `audit.output: file` では、`audit.dir` に UTC の日ごとのファイル（`audit-YYYY-MM-DD.jsonl`）を書きます。1行ごとに fsync します（`no_fsync: true` で無効にできますが、停止時に直近の行を失うおそれがあります）
-- `audit.retention`（既定 365日）より古いファイルは削除します。削除の前に、そのファイルの最後のハッシュを `checkpoints.jsonl` に記録し、同じ内容をプロセスのログ（`audit checkpoint`）にも出します。残ったログは、このチェックポイントから検証できます
-- 改ざんされた（検証に失敗する）ファイルは削除しません
-- `audit.output: stdout` はハッシュチェーンを起動のたびに始め直すので、検証できる履歴が必要な本番では `file` を使います
-- 長期の保存と改ざん防止のため、日付が変わった前日のファイルを、上書きできない保存先（S3 Object Lock、GCS のバケットロックなど）に毎日コピーします。プロセスのログ（チェックポイントを含む）も別のログ基盤に送ります
+**Retention**
 
-**検証**
+- With `audit.output: file`, dbgateway writes one file per UTC day (`audit-YYYY-MM-DD.jsonl`) in `audit.dir` and fsyncs every line. `no_fsync: true` disables this, but the last lines may be lost on a crash.
+- Files older than `audit.retention` (default 365 days) are deleted. Before deleting a file, its last hash is recorded in `checkpoints.jsonl` and also written to the process log (`audit checkpoint`). The remaining files verify from that checkpoint.
+- Files that fail verification (tampered) are not deleted.
+- `audit.output: stdout` restarts the hash chain on every start. Use `file` (or `postgres`, see [ha.md](ha.md)) in production when you need a verifiable history.
+- For long-term, tamper-resistant storage, copy the previous day's file every day to write-once storage (S3 Object Lock, GCS bucket lock, etc.). Also ship the process log (including checkpoints) to a separate logging system.
+
+**Verification**
 
 ```sh
 dbgw audit verify --dir /var/lib/dbgateway/audit
 # ok: 12345 entries in 30 files, chained from genesis; last hash <hash>
 ```
 
-- 1行ずつハッシュを再計算し、`prev_hash` のつながりを確かめます。行の書き換え、削除、並べ替えがあると `FAILED` を表示して終了コード 1 で終わります
-- 毎日 cron や CI で実行し、失敗したらセキュリティ用チャンネルに通知します。最後のハッシュを外部（チケットや別のログ基盤）に記録しておくと、末尾の切り詰めも見つけられます
-- 検証に失敗したら、そのディレクトリを書き込み禁止にして保全し、外部にコピーしたファイルや OTLP の転送先と突き合わせて、どの行が変わったかを調べます
+- Recomputes the hash of every line and checks the `prev_hash` chain. Modified, deleted or reordered lines print `FAILED` and exit with code 1.
+- Run it daily from cron or CI and alert the security channel on failure. Recording the last hash externally (in a ticket or another logging system) also detects truncation at the end.
+- If verification fails, make the directory read-only to preserve it, then compare it with the external copies and the OTLP destination to find which lines changed.
 
-**検索**
+**Search**
 
-監査ログの検索（`/audit` の画面と API）は、ファイルを新しい順に読み、期間、申請者（人またはエージェントの部分一致）、接続先、判定、イベント、テーブル、リクエストIDで絞り込みます。読み込みは後ろから少しずつ行うため、ログが大きくてもメモリの使用量は一定です。
+Audit log search (the `/audit` page and its API) reads entries newest first and filters by time range, principal (substring of the human or agent name), database, decision, event, table and request ID. Files are read backwards in chunks, so memory use stays constant however large the log is.
 
-## 4. 緊急迂回経路（break-glass）
+## 4. Emergency bypass (direct database access)
 
-dbgateway が止まっていて、復旧を待てない障害対応のときだけ、dbgateway を通らずに DB へ直接接続します。dbgateway が動いているなら、まず dbgateway の「緊急昇格」（approver が理由とステップアップ認証つきで時間を限って使う）を使います。迂回経路では dbgateway の解析、ポリシー、マスキング、監査が一切効かないので、最後の手段です。
+Connect to the database directly, bypassing dbgateway, only during an incident when dbgateway is down and you cannot wait for it to recover. If dbgateway is running, use its break-glass elevation first (an approver uses it for a limited time, with a reason and step-up authentication; see [approvals.md](approvals.md)). The bypass skips all of dbgateway's analysis, policies, masking and auditing, so it is the last resort.
 
-### 4.1 事前の準備（平常時）
+### 4.1 Preparation (in normal times)
 
-**封印した資格情報**
+**Sealed credentials**
 
-- 緊急用の DB ユーザー（例: `dbgw_breakglass`）を作り、普段は `NOLOGIN` にしておきます。dbgateway の設定にも、dbgateway の実行環境にも、この資格情報を置きません
-- 有効にするための資格情報は、dbgateway とは別の場所に封印します。どちらか、または両方を使います
-  - **クラウドの IAM で封印する（推奨）**: RDS なら `dbgw_breakglass` に `rds_iam` を付け、`rds-db:connect` を許可した専用の IAM ロールを用意します。このロールは指名した数名だけが MFA 付きで引き受けられるようにします。Cloud SQL なら専用のグループに `roles/cloudsql.instanceUser` を、普段は付けずに、緊急時だけ期限付きの条件で付与します
-  - **パスワードを封印する**: パスワードをパスワード管理ツールの緊急用の保管庫や、アクセスが記録されるシークレット管理（AWS Secrets Manager、Secret Manager）に置き、取り出せる人を限ります。取り出しは2人で行う（承認つき）ようにします
-- 管理者ユーザー（RDS のマスターユーザー、Cloud SQL の `postgres`）の資格情報も同じ扱いにします
+- Create an emergency database user (e.g. `dbgw_breakglass`) and keep it `NOLOGIN`. Do not put its credentials in dbgateway's configuration or runtime environment.
+- Seal the credentials needed to enable it somewhere separate from dbgateway, using one or both of:
+  - **Seal with cloud IAM (recommended)**: On RDS, grant `rds_iam` to `dbgw_breakglass` and create a dedicated IAM role allowed `rds-db:connect`. Only a few named people can assume this role, with MFA. On Cloud SQL, do not grant `roles/cloudsql.instanceUser` to a dedicated group in normal times; grant it with a time-bound condition only in an emergency.
+  - **Seal a password**: Store the password in an emergency vault of your password manager, or in a secret manager that logs access (AWS Secrets Manager, Secret Manager), and limit who can retrieve it. Require two people (with approval) to retrieve it.
+- Treat the administrator user's credentials (the RDS master user, Cloud SQL `postgres`) the same way.
 
-**通知の仕組み**
+**Alerting**
 
-使った時点で必ず通知されるように、DB とクラウドの両方で検知します。
+Detect use at both the database and the cloud layer so that every use triggers an alert.
 
-- DB: `log_connections = on` にし、`dbgw_breakglass` と管理者ユーザーのログインをログから検知して、セキュリティ用チャンネルと管理者に通知します（CloudWatch Logs のメトリクスフィルター、Cloud Logging のログベースのアラート）。pgaudit を使えるなら、このユーザーの全操作を記録します
-- クラウド: 緊急用 IAM ロールの AssumeRole、シークレットの取得（`GetSecretValue`、`AccessSecretVersion`）、IAM の付与を CloudTrail / Cloud Audit Logs から検知して通知します
-- 設計の通知イベント「緊急経路の使用」（`break_glass_used`）と同じ通知先に送ります
+- Database: set `log_connections = on`, detect logins by `dbgw_breakglass` and the administrator user in the logs, and alert the security channel and administrators (CloudWatch Logs metric filters, Cloud Logging log-based alerts). If pgaudit is available, log every operation by this user.
+- Cloud: detect AssumeRole on the emergency IAM role, secret retrieval (`GetSecretValue`, `AccessSecretVersion`) and IAM grants in CloudTrail / Cloud Audit Logs, and alert.
+- Send these alerts to the same destination as dbgateway's `break_glass_used` notification (see [notifications.md](notifications.md)).
 
-**接続経路**
+**Network path**
 
-DB へのネットワーク経路は普段 dbgateway だけが持っています。緊急時の経路（SSM Session Manager のポート転送、Cloud SQL Auth Proxy、普段は止めてある踏み台など）を決めておき、それ自体も使用を記録・通知します。
+Normally only dbgateway has a network path to the database. Decide the emergency path in advance (SSM Session Manager port forwarding, Cloud SQL Auth Proxy, a bastion host that is normally stopped, etc.), and log and alert on its use too.
 
-**訓練**
+**Drills**
 
-四半期に1回、検証環境で手順を通しで実行し、通知が届くこと、資格情報が取り出せること、事後の無効化とローテーションができることを確かめます。
+Once a quarter, run the whole procedure in a test environment and confirm that alerts arrive, credentials can be retrieved, and they can be disabled and rotated afterwards.
 
-### 4.2 使う手順（緊急時）
+### 4.2 Procedure (in an emergency)
 
-1. **宣言する**: インシデントとして記録し、迂回経路を使う理由、作業内容、作業者と立会人をセキュリティ用チャンネルに書きます（自動通知とは別に、人が先に書く）
-2. **2人で行う**: 作業者と立会人を分け、立会人は画面共有などで操作を見ます
-3. **資格情報を取り出す**: 緊急用 IAM ロールを MFA 付きで引き受ける、またはシークレットを取り出します。パスワード方式なら `ALTER ROLE dbgw_breakglass LOGIN VALID UNTIL '<2時間後>'` で期限付きで有効にします
-4. **接続する**: TLS を検証して接続し、操作を記録します
+1. **Declare**: Record an incident and post the reason for the bypass, the planned work, the operator and the witness in the security channel (a person posts first, separately from automatic alerts).
+2. **Two people**: The operator and the witness are different people; the witness watches the session (e.g. by screen sharing).
+3. **Retrieve credentials**: Assume the emergency IAM role with MFA, or retrieve the secret. With a password, enable the user for a limited time with `ALTER ROLE dbgw_breakglass LOGIN VALID UNTIL '<two hours from now>'`.
+4. **Connect**: Connect with TLS verification and record the session.
 
    ```sh
    script -q breakglass-$(date -u +%Y%m%dT%H%M%SZ).log
@@ -316,46 +320,48 @@ DB へのネットワーク経路は普段 dbgateway だけが持っています
 
    ```sql
    \set ECHO all
-   SET default_transaction_read_only = on;   -- 書き込みが必要になるまで読み取りだけ
+   SET default_transaction_read_only = on;   -- read only until a write is needed
    SET statement_timeout = '30s';
    ```
 
-5. **必要最小限の操作をする**: 書き込みは1件ずつ、`BEGIN` してから影響行数を確かめて `COMMIT` します。実行した SQL はインシデントの記録に貼ります
-6. **終わらせる**: 接続を切り、`ALTER ROLE dbgw_breakglass NOLOGIN` に戻し、パスワードを変えて封印し直します（IAM 方式なら一時的な付与を外す）。緊急時の接続経路を閉じます。終わったことをチャンネルに書きます
+5. **Do the minimum**: Run writes one at a time: `BEGIN`, check the affected row count, then `COMMIT`. Paste the SQL you ran into the incident record.
+6. **Close**: Disconnect, set `ALTER ROLE dbgw_breakglass NOLOGIN`, change the password and seal it again (with IAM, remove the temporary grant). Close the emergency network path. Post in the channel that you are done.
 
-### 4.3 事後レビュー
+### 4.3 Post-incident review
 
-使ったら、2営業日以内に事後レビューを行います。
+Hold a review within two business days of any use.
 
-- 集めるもの: インシデントの記録、`script` の記録、DB のログ（接続と pgaudit）、CloudTrail / Cloud Audit Logs、通知の記録、同じ時間帯の dbgateway の監査ログ
-- 確かめること: 宣言と通知が操作より先だったか、操作がインシデントの範囲に収まっていたか、実行した SQL と DB のログが一致するか、無効化とローテーションが終わっているか
-- 決めること: なぜ dbgateway（緊急昇格を含む）で対応できなかったか。冗長化、緊急昇格の範囲、手順の改善など、次に迂回経路を使わずに済むための対策
-- レビューの結果は管理者とセキュリティ担当が承認し、インシデントの記録に残します。通知が届かなかった、無効化を忘れたなど手順の不備があれば、次の訓練の前に直します
+- Collect: the incident record, the `script` log, database logs (connections and pgaudit), CloudTrail / Cloud Audit Logs, alert records, and dbgateway's audit log for the same period.
+- Check: whether the declaration and alerts came before the operations, whether the operations stayed within the incident's scope, whether the SQL run matches the database logs, and whether disabling and rotation are complete.
+- Decide: why dbgateway (including break-glass elevation) could not handle it, and what to change so the bypass is not needed next time (redundancy, break-glass elevation scope, procedure improvements, etc.).
+- Administrators and the security team approve the review result and keep it in the incident record. Fix procedural gaps (an alert did not arrive, disabling was forgotten, etc.) before the next drill.
 
-## 5. Web画面の本人確認と閲覧権限
+## 5. Web UI identity checks and access
 
-### 5.1 パスキー
+See [authentication.md](authentication.md) for sign-in methods and [approvals.md](approvals.md) for approvals and break-glass elevation.
 
-- パスキー（WebAuthn）のRP IDは `server.public_url` のホスト名です。IPアドレスは使えません（その場合パスキーは無効になり、`auth.passkeys: true` は設定エラーになります）。ホスト名を変えると、登録済みのパスキーは使えなくなります
-- IdPを使う環境では、各自がアカウント画面の「パスキーを追加」から登録します。追加の前に本人確認（IdPの再認証）を求めます
-- `auth.passkeys: true` にすると、ログイン画面でパスキーでログインできます。IdPのない環境ではこれを使います。最初のパスキーは、サーバー上で次のコマンドを実行して得る1回限りのリンク（24時間有効）から登録します。リンクは本人にだけ、信頼できる経路で渡します
+### 5.1 Passkeys
+
+- The passkey (WebAuthn) RP ID is the host name of `server.public_url`. IP addresses cannot be used (passkeys are then disabled, and `auth.passkeys: true` is a configuration error). Changing the host name invalidates registered passkeys.
+- With an IdP, each person registers a passkey from "Add passkey" on their account page. Adding one requires re-authenticating with the IdP first.
+- With `auth.passkeys: true`, people can sign in with a passkey on the login page. Use this when there is no IdP. The first passkey is registered from a one-time link (valid 24 hours) produced by running the following on the server. Give the link only to that person, over a trusted channel.
 
 ```sh
-dbgw passkey enroll --config /etc/dbgateway/dbgateway.yaml --email hanako@example.com
+dbgw passkey enroll --config /etc/dbgateway/dbgateway.yaml --email alice@example.com
 ```
 
-- IdPと併用すると、IdPから外した人もパスキーでログインできてしまいます。SCIMで無効化するか、パスキーを使わない設定にします
+- When combined with an IdP, people removed from the IdP can still sign in with a passkey. Disable them through SCIM, or do not enable passkey sign-in.
 
-### 5.2 ステップアップ（承認・緊急昇格の前の本人確認）
+### 5.2 Step-up authentication (before approvals and break-glass elevation)
 
-承認と緊急昇格の前に、`approvals.step_up_max_age`（既定5分）以内の本人確認を求めます。方法は、パスキー、IdPの再認証（`prompt=login`、`max_age=0` で要求し、IDトークンの `auth_time` が5分以内であることを確認）、開発用ログインでの再確認ボタン（ループバックのみ）のいずれかです。IdPが `auth_time` を返さない場合、IdPの再認証は使えません。
+Approving a request and starting break-glass elevation require an identity check within `approvals.step_up_max_age` (default 5 minutes). The check can be a passkey, IdP re-authentication (requested with `prompt=login` and `max_age=0`; the ID token's `auth_time` must be within the last 5 minutes), or the re-confirm button of the development login (loopback only). IdP re-authentication is unavailable if the IdP does not return `auth_time`.
 
-### 5.3 監査ログとユーザー画面
+### 5.3 Audit log and user pages
 
-監査ログの検索（`/audit`）とユーザー画面（`/users`）を使えるのは、`auditors` に書いた人・グループと、いずれかの接続先に `admin` ロールを持つ人です。監査ログの検索は `audit.output: file` のときだけ使えます。
+The audit log search (`/audit`) and the user pages (`/users`) are available to people and groups listed in `auditors`, and to anyone with the `admin` role on any database. Audit log search works with `audit.output: file` or `postgres`, not with `stdout`.
 
 ```yaml
 auditors:
   - group: security
-  - user: hanako@example.com
+  - user: alice@example.com
 ```

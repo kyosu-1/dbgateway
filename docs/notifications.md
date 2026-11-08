@@ -1,30 +1,30 @@
-# イベント通知（Slack と Webhook）
+# Event notifications (Slack and webhooks)
 
-dbgateway は、承認依頼・承認結果・実行結果・拒否・緊急昇格・異常・設定変更を Slack と汎用 Webhook に通知します。Slack では承認依頼の投稿に「承認画面を開く」と「却下」のボタンが付き、後続のイベントは同じスレッドに返ります。
+dbgateway sends notifications to Slack and generic webhooks for approval requests, approval decisions, execution results, denials, break-glass elevation, anomalies and configuration changes. In Slack, an approval request post has "Open approval page" and "Reject" buttons, and later events for the same request are posted in its thread.
 
-通知は補助です。承認画面と `get_request` が正で、通知の送信は非同期・ベストエフォートです。送信に失敗しても、リクエストの処理（承認、実行、拒否）には一切影響しません。
+Notifications are supplementary. The approval page and `get_request` are the source of truth; notifications are sent asynchronously on a best-effort basis. A failed notification never affects how a request is processed (approval, execution, denial).
 
-## 送るもの・送らないもの
+## What is sent and what is not
 
-| 送る | 送らない |
+| Sent | Not sent |
 | --- | --- |
-| 正規化したSQL（リテラルを `$1` などに置き換えたもの） | SQL原文、リテラル |
-| 対象テーブル、見積もり行数、リスク、承認ルール名 | クエリの結果、RETURNING の値 |
-| `reason`（申請者が書いた理由。リンクやメンションにならないプレーンテキストで表示） | データベースのエラーメッセージ（値を含むことがあるため。「実行に失敗しました。詳細は承認画面で」とだけ表示） |
-| 申請者（人、エージェント名）、状態、操作した人、承認画面の URL | 構文エラーなどの判定メッセージ（SQLの一部を引用することがあるため）。ルール名と段階だけを送る |
+| Normalized SQL (literals replaced with `$1`, etc.) | Raw SQL, literals |
+| Target tables, estimated rows, risk, approval rule name | Query results, RETURNING values |
+| `reason` (the requester's justification, shown as plain text that never becomes a link or mention) | Database error messages (they can contain values; the notification says only that the execution failed and to see the approval page) |
+| Requester (human, agent name), status, the person who acted, approval page URL | Decision messages such as syntax errors (they can quote parts of the SQL); only the rule name and stage are sent |
 
-- Slack の文面はすべてエスケープし（`&`、`<`、`>`）、`verbatim` で自動リンクを止めています。`reason` はプレーンテキストのブロックに入れるので、`<!channel>` や `<https://…|…>` を書かれても通知にもリンクにもなりません
-- リンクの展開（unfurl）は無効にしています
-- ログにも、メッセージ本文、トークン、Webhook の URL は出しません（イベントの種類、リクエストID、送り先の名前、エラーだけ）
+- All Slack text is escaped (`&`, `<`, `>`), and `verbatim` is used to disable automatic linking. `reason` is placed in a plain-text block, so writing `<!channel>` or `<https://…|…>` in it produces neither a notification nor a link
+- Link unfurling is disabled
+- Logs never contain message bodies, tokens or webhook URLs (only the event type, request ID, destination name and error)
 
-## 設定
+## Configuration
 
 ```yaml
 notifications:
   - events: [approval_requested]
-    to: { slack: "#db-approvals", mention: approvers }   # 承認できる人をメンション
+    to: { slack: "#db-approvals", mention: approvers }   # mention the people who can approve
   - events: [approval_decided, execution_finished]
-    to: { slack: requester }                              # 申請者にDM
+    to: { slack: requester }                              # DM the requester
   - events: [query_denied]
     when: database.labels.env == "prod"
     to: { slack: "#security-alerts" }
@@ -33,79 +33,79 @@ notifications:
   - events: [config_changed]
     to: { slack: "#dbgateway-admin" }
 
-slack:                              # 省略時は下の既定値
-  app_token_env: SLACK_APP_TOKEN    # xapp-（connections:write）
+slack:                              # defaults shown below if omitted
+  app_token_env: SLACK_APP_TOKEN    # xapp- (connections:write)
   bot_token_env: SLACK_BOT_TOKEN    # xoxb-
 
 anomaly:
-  denials_per_10m: 10               # 同じ申請者の拒否が10分間にこの回数を超えたら
-  rows_per_hour: 100000             # 同じ申請者に1時間に返した行数がこれを超えたら
+  denials_per_10m: 10               # more denials for one requester within 10 minutes than this
+  rows_per_hour: 100000             # more rows returned to one requester within an hour than this
 
-notifications_language: ja          # ja（既定）または en
-notifications_webhook_secret_env: DBGW_WEBHOOK_SECRET   # 任意。Webhook の署名鍵
+notifications_language: en          # en (default) or ja
+notifications_webhook_secret_env: DBGW_WEBHOOK_SECRET   # optional; key for signing webhooks
 ```
 
-### ルート
+### Routes
 
-- `events`: `approval_requested`、`approval_decided`、`execution_finished`、`query_denied`、`break_glass_used`、`anomaly_detected`、`config_changed` から選ぶ
-- `when`（任意）: CEL の条件。使える変数は `database`（`name`、`labels`）と `event`（`type`、`status`、`risk`）。例: `database.labels.env == "prod" && event.risk == "high"`。評価に失敗した条件（例: その接続先にないラベルを参照した）は「一致しない」として扱います。ラベルがない接続先もあるときは `"env" in database.labels && database.labels.env == "prod"` のように書きます
-- `to.slack`: `"#チャンネル名"`、チャンネルID（`C0123ABC`）、または `requester`（申請者のSlackユーザーへのDM。紐づけていない人には送らない）
-- `to.mention: approvers`: 次に承認できる人を、紐づいたSlackユーザーとしてメンションする（紐づいていない人はメールアドレスを表示）。チャンネル宛てのときだけ使える
-- `to.webhook_env`: Webhook の URL を入れた環境変数の名前
-- 一致したルートはすべて使います（最初の一致だけではありません）。同じチャンネルや同じ Webhook には1回だけ送ります
+- `events`: any of `approval_requested`, `approval_decided`, `execution_finished`, `query_denied`, `break_glass_used`, `anomaly_detected`, `config_changed`
+- `when` (optional): a CEL condition. Available variables are `database` (`name`, `labels`) and `event` (`type`, `status`, `risk`). Example: `database.labels.env == "prod" && event.risk == "high"`. A condition that fails to evaluate (for example, it references a label the database does not have) is treated as not matching. If some databases lack the label, write `"env" in database.labels && database.labels.env == "prod"`
+- `to.slack`: `"#channel-name"`, a channel ID (`C0123ABC`), or `requester` (a DM to the requester's Slack user; not sent to people who have not linked their account)
+- `to.mention: approvers`: mentions the people who can approve the next step, as their linked Slack users (people without a link are shown by email address). Only valid for channel destinations
+- `to.webhook_env`: the name of the environment variable holding the webhook URL
+- Every matching route is used (not just the first). The same channel or webhook receives a message only once
 
-設定の読み込み時に、イベント名、CEL のコンパイル、チャンネルの書式、環境変数名を検査します。トークンや Webhook の環境変数が空のときは警告を出し、その送り先を飛ばします（起動は止めません）。
+When the configuration is loaded, dbgateway checks event names, compiles the CEL conditions, and validates channel formats and environment variable names. If a token or webhook environment variable is empty, it logs a warning and skips that destination (startup continues).
 
-### スレッド
+### Threads
 
-- `approval_requested` をチャンネルに投稿すると、その投稿（チャンネルと `ts`）を管理用DBに保存し、承認・却下・期限切れ・取り下げ（`approval_decided`）と実行結果（`execution_finished`）を **同じスレッドに返信** します。これはルートの設定にかかわらず行います。同じチャンネル宛てのルートがあっても、チャンネルに別の投稿はしません
-- 元の投稿の「状態」の行も更新します（例: 「却下（hanako@example.com）」「実行成功」）。承認待ちでなくなったら「却下」ボタンを消します
+- When `approval_requested` is posted to a channel, the post (channel and `ts`) is saved in the management database, and approval, rejection, expiry and withdrawal (`approval_decided`) and the execution result (`execution_finished`) are **posted as replies in the same thread**. This happens regardless of route configuration. Even if a route targets the same channel, no separate channel post is made
+- The "Status" line of the original post is also updated (for example "Rejected (alice@example.com)", "Succeeded"). Once the request is no longer pending, the "Reject" button is removed
 
-### 異常検知（anomaly_detected）
+### Anomaly detection (anomaly_detected)
 
-- 同じ申請者（エージェントの申請は代理元の人。人ごとにまとめて数えます）の `query_denied` が10分間に `denials_per_10m` 回を超えたとき
-- 同じ申請者に1時間に返した行数が `rows_per_hour` を超えたとき
-- 一度通知したら、その申請者・その種類については窓の時間（10分、1時間）が過ぎるまで再通知しません
-- カウントはプロセスのメモリ上で行います（複数台構成では台ごと）
+- When one requester's `query_denied` events exceed `denials_per_10m` within 10 minutes (agent requests count toward the human they act for; counts are per human)
+- When the rows returned to one requester within an hour exceed `rows_per_hour`
+- After a notification, the same requester and kind are not notified again until the window (10 minutes, 1 hour) has passed
+- Counting happens in process memory (per instance in a multi-instance deployment)
 
-### 設定変更（config_changed）
+### Configuration changes (config_changed)
 
-起動時に、設定のバージョン（ファイルの SHA-256 の先頭12文字）を前回の起動時と比べ、変わっていれば通知します（前回と今回のバージョンを載せます）。初回の起動は通知しません。
+At startup, dbgateway compares the configuration version (the first 12 characters of the file's SHA-256) with the one from the previous startup and notifies if it changed (with the previous and current versions). The first startup does not notify.
 
-## Slack のセットアップ
+## Slack setup
 
-1. https://api.slack.com/apps で「Create New App」→「From an app manifest」を選び、[`deploy/slack/manifest.yaml`](../deploy/slack/manifest.yaml) を貼り付けて作成する
-2. 「Basic Information」→「App-Level Tokens」で `connections:write` のトークンを作り、`SLACK_APP_TOKEN`（`xapp-…`）に入れる
-3. 「Install to Workspace」でインストールし、「Bot User OAuth Token」を `SLACK_BOT_TOKEN`（`xoxb-…`）に入れる
-4. 通知先のチャンネルにボットを招待する（`/invite @dbgateway`）
-5. dbgateway を再起動する。ログに `Slack Socket Mode connected` が出れば接続できています
+1. At https://api.slack.com/apps, choose "Create New App" → "From an app manifest", and paste [`deploy/slack/manifest.yaml`](../deploy/slack/manifest.yaml)
+2. Under "Basic Information" → "App-Level Tokens", create a token with `connections:write` and put it in `SLACK_APP_TOKEN` (`xapp-…`)
+3. Install the app with "Install to Workspace" and put the "Bot User OAuth Token" in `SLACK_BOT_TOKEN` (`xoxb-…`)
+4. Invite the bot to the destination channels (`/invite @dbgateway`)
+5. Restart dbgateway. `Slack Socket Mode connected` in the log means it is connected
 
-Socket Mode なので、dbgateway から Slack への外向きの WebSocket だけを使います。Slack から dbgateway へのインバウンドの URL は不要です。複数台で動かすと各台が接続し、Slack がボタン操作をどれか1台に届けます。
+Socket Mode uses only an outbound WebSocket from dbgateway to Slack; no inbound URL from Slack to dbgateway is needed. With multiple instances, each instance connects and Slack delivers each button action to one of them.
 
-必要なボットの権限: `chat:write`（投稿・更新・本人にだけ見える返信）、`im:write`（申請者へのDM）、`users:read`、`commands`（`/dbgw`）。
+Required bot scopes: `chat:write` (post, update, ephemeral replies), `im:write` (DMs to requesters), `users:read`, `commands` (`/dbgw`).
 
-### Slack アカウントの紐づけ
+### Linking Slack accounts
 
-メンション、申請者へのDM、却下ボタンには、Slackユーザーとdbgatewayのユーザーの紐づけが必要です。
+Mentions, DMs to requesters and the Reject button require a link between a Slack user and a dbgateway user.
 
-1. dbgateway のアカウント画面で Slack 連携のコードを発行し、1回限りのコード（例: `7KQ2-M9XD`、10分有効）を表示する
-2. Slack で `/dbgw link 7KQ2-M9XD` を実行する
+1. On the dbgateway account page, issue a Slack linking code; a one-time code is shown (for example `7KQ2-M9XD`, valid for 10 minutes)
+2. In Slack, run `/dbgw link 7KQ2-M9XD`
 
-- コードは管理用DBにハッシュだけを保存します。新しいコードを発行すると前のコードは無効になります
-- 同じSlackユーザーが10分間に5回コードを間違えると、しばらく受け付けません
-- `/dbgw whoami` で紐づいているアカウントを確認、`/dbgw unlink`（またはアカウント画面）で解除できます
-- 1つのSlackユーザーは1つのdbgatewayユーザーにだけ紐づきます。別のアカウントで紐づけ直すと、前の紐づけは外れます
+- Only a hash of the code is stored in the management database. Issuing a new code invalidates the previous one
+- After five wrong codes from the same Slack user within 10 minutes, further attempts are refused for a while
+- `/dbgw whoami` shows the linked account; `/dbgw unlink` (or the account page) removes the link
+- A Slack user links to only one dbgateway user. Linking again from another account removes the previous link
 
-### 却下ボタン
+### Reject button
 
-- 押した人のSlackユーザーがdbgatewayのユーザーと紐づいていて、そのリクエストのいずれかのステップの承認者であるときだけ却下できます（承認画面の却下と同じ判定。コメントは「Slackから却下」）
-- 申請者本人、紐づいていない人、承認者でない人、SCIM で無効化された人には、本人にだけ見えるメッセージで理由を返し、何もしません。すでに処理済みのリクエストも同様です
-- 却下するとスレッドに結果が返り、元の投稿の状態が更新されます
-- **承認は Slack ではできません**。「承認画面を開く」から承認画面に移り、本人確認（パスキーまたは IdP の再認証）をして承認します
+- A rejection is accepted only if the Slack user who pressed the button is linked to a dbgateway user who is an approver for some step of the request (the same check as rejecting on the approval page; the comment records that it was rejected from Slack)
+- The requester, unlinked users, non-approvers and users deactivated through SCIM get an ephemeral message explaining why, and nothing happens. The same applies to requests that are already decided
+- After a rejection, the result is posted in the thread and the original post's status is updated
+- **Approving is not possible in Slack.** "Open approval page" takes you to the approval page, where you approve after step-up authentication (passkey or IdP re-authentication)
 
-## Webhook
+## Webhooks
 
-`webhook_env` の環境変数に入れた URL に、イベントを JSON で POST します（Microsoft Teams、PagerDuty などへの中継用）。
+Events are POSTed as JSON to the URL in the `webhook_env` environment variable (for relaying to Microsoft Teams, PagerDuty and so on).
 
 ```json
 {
@@ -114,27 +114,27 @@ Socket Mode なので、dbgateway から Slack への外向きの WebSocket だ�
   "request_id": "req_…",
   "database": "prod-main",
   "labels": { "env": "prod" },
-  "principal": { "kind": "agent", "human": "taro@example.com", "agent": "claude-code", "client_id": "…" },
+  "principal": { "kind": "agent", "human": "alice@example.com", "agent": "claude-code", "client_id": "…" },
   "sql": "UPDATE users SET plan = $1 WHERE id = $2",
   "tables": ["public.users"],
   "estimate_rows": 1,
-  "reason": "問い合わせ#1234の対応",
+  "reason": "Support ticket #1234",
   "status": "pending",
-  "approvers": ["hanako@example.com"],
+  "approvers": ["bob@example.com"],
   "url": "https://dbgw.example.com/approvals/req_…",
   "detail": { "risk": "high", "approval_rule": "prod-writes", "max_affected_rows": "2" },
-  "text": "承認依頼 · prod-main · claude-code · taro@example.com の代理 · 承認待ち"
+  "text": "Approval requested · prod-main · claude-code on behalf of alice@example.com · Pending approval"
 }
 ```
 
-- `detail` に入るのは `risk`、`approval_rule`、`max_affected_rows`、`step`、`rows_affected`、`stage`、`rule`、`databases`、`expires_at`、`anomaly`、`count`、`threshold`、`window`、`previous_version`、`version` だけです
-- ヘッダー: `Content-Type: application/json`、`User-Agent: dbgateway`、`X-Dbgw-Event: <イベント名>`
-- タイムアウトは5秒。接続エラー、429、5xx のときは間隔を倍にしながら（1秒、2秒）**最大3回** まで試します。それ以外の 4xx は再送しません
-- URL はログに出しません（URL に秘密が含まれることが多いため）
+- `detail` contains only `risk`, `approval_rule`, `max_affected_rows`, `step`, `rows_affected`, `stage`, `rule`, `databases`, `expires_at`, `anomaly`, `count`, `threshold`, `window`, `previous_version` and `version`
+- Headers: `Content-Type: application/json`, `User-Agent: dbgateway`, `X-Dbgw-Event: <event name>`
+- The timeout is 5 seconds. On connection errors, 429 and 5xx, delivery is retried with doubling intervals (1 s, 2 s), **at most 3 attempts** in total. Other 4xx responses are not retried
+- URLs are never logged (they often contain secrets)
 
-### 署名の検証
+### Verifying signatures
 
-`notifications_webhook_secret_env` を設定すると、本文の HMAC-SHA256 を `X-Dbgw-Signature: sha256=<16進>` で付けます。受け側では、受け取った本文そのもの（パースし直す前のバイト列）で同じ値を計算し、定数時間で比較してください。
+With `notifications_webhook_secret_env` set, an HMAC-SHA256 of the body is sent as `X-Dbgw-Signature: sha256=<hex>`. On the receiving side, compute the same value over the body exactly as received (the bytes before any re-parsing) and compare in constant time.
 
 ```python
 import hmac, hashlib
@@ -142,17 +142,17 @@ expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
 ok = hmac.compare_digest(expected, request.headers["X-Dbgw-Signature"])
 ```
 
-本文には `time` が入るので、古すぎるイベントを捨てることで再送攻撃を防げます。
+The body includes `time`, so discarding events that are too old protects against replay.
 
-## 運用
+## Operations
 
-- 送信待ちのイベントは最大1024件までメモリに積みます。あふれた分は捨て、件数をログに出します（1分に1回まで）
-- 停止時は最大10秒、送信待ちのイベントを送り切るのを待ちます
-- 管理用DBは SQLite（`store.driver: sqlite`）が前提です。スレッドの位置と紐づけは `slack_threads`、`slack_links`、`slack_link_codes` テーブルに入ります
+- Up to 1024 pending events are queued in memory. Overflowing events are dropped and the count is logged (at most once a minute)
+- On shutdown, dbgateway waits up to 10 seconds for pending events to be sent
+- Slack thread positions and account links are stored in the `slack_threads`, `slack_links` and `slack_link_codes` tables of the management database (SQLite or PostgreSQL)
 
-## 組み込み（開発者向け）
+## Integration (for developers)
 
-- `notify.New` が `events.Publisher` を実装する `*Dispatcher` を返します。`server` パッケージが、通知が設定されているときにゲートウェイと承認サービスへ渡しています（`notify.NewAnomaly` で包んだもの）
-- `Anomaly.ObserveRows(principal, database, rows)`: 読み取りが成功するたびにゲートウェイから呼ぶと、`rows_per_hour` の判定に使われます
-- `Dispatcher.Linker()` の `Linked(email)`、`IssueCode(email)`、`Unlink(email)` を、Webのアカウント画面から使います
-- `Dispatcher.SetPrincipalResolver` で、却下ボタンを押した人の principal の組み立てを auth パッケージのものに置き換えられます（既定は管理用DBのユーザーと IdP グループから `RBAC.ResolveGroups` で解決し、SCIM で無効化された人は拒否）
+- `notify.New` returns a `*Dispatcher` that implements `events.Publisher`. When notifications are configured, the `server` package passes it (wrapped with `notify.NewAnomaly`) to the gateway and the approval service
+- `Anomaly.ObserveRows(principal, database, rows)`: called by the gateway after each successful read; used for the `rows_per_hour` check
+- The web account page uses `Linked(email)`, `IssueCode(email)` and `Unlink(email)` of `Dispatcher.Linker()`
+- `Dispatcher.SetPrincipalResolver` replaces how the principal of the person who pressed the Reject button is built with the auth package's resolver (by default it is resolved from the management database's user and IdP groups with `RBAC.ResolveGroups`, and users deactivated through SCIM are refused)
