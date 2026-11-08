@@ -199,9 +199,10 @@ dbgw request reject req_... --comment "バッチで対応するため"
 ## dbgw token print
 
 ```sh
-PGPASSWORD="$(dbgw token print)" psql "host=127.0.0.1 port=5433 dbname=prod-main user=me"
+curl -H "Authorization: Bearer $(dbgw token print)" -H "Content-Type: application/json" \
+  -d '{}' https://dbgateway.example.com/dbgateway.v1.GatewayService/ListDatabases
 ```
 
-`dbgw login` で保存したアクセストークンを標準出力に表示します。PostgreSQL 互換プロキシ（[pgproxy.md](pgproxy.md)）のパスワードに使います。
+`dbgw login` で保存したアクセストークンを標準出力に表示します。スクリプトから connectRPC の API を呼ぶときなどに使います。
 
 トークンは秘密情報です。持っている人は、期限が切れるまで本人として問い合わせができます。標準エラーにその警告と期限を表示します。共有したり、ログやシェルの履歴に残したりしないでください。漏れたときは `dbgw token list` で ID を確かめて `dbgw token revoke <ID>` で失効させ、`dbgw login` し直してください。

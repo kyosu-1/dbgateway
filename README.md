@@ -6,7 +6,7 @@ AIエージェントが本番DBに触るときに必ず通す「SQLを理解す�
 - ライセンス: [Apache-2.0](LICENSE)（ガバナンス機能を有償版に分けません）
 - 脆弱性の報告: [SECURITY.md](SECURITY.md)
 
-> **状態: フェーズ1〜4を実装済み。** 読み取りの関所（フェーズ1）に加え、承認つきの書き込み・Slack通知（フェーズ2）、人のクエリ・IAM認証・冗長構成（フェーズ3）、PostgreSQLプロトコル互換のプロキシ・MySQL・SCIM・個人情報の検出（フェーズ4）があります。
+> **状態: フェーズ1〜4を実装済み。** 読み取りの関所（フェーズ1）に加え、承認つきの書き込み・Slack通知（フェーズ2）、人のクエリ（Web の SQL エディタと CLI）・IAM認証・冗長構成（フェーズ3）、MySQL・SCIM・個人情報の検出（フェーズ4）があります。人が SQL を実行する入口は、Bytebase と同じく Web の SQL エディタと CLI で、psql などの既存クライアントを直接つなぐ経路は設けません。
 
 ## できること
 
@@ -25,7 +25,7 @@ AIエージェントが本番DBに触るときに必ず通す「SQLを理解す�
 | 本人確認（フェーズ2） | パスキー（WebAuthn）によるログインとステップアップ。IdPのない環境は登録リンク（`dbgw passkey enroll`）から |
 | 人の利用（フェーズ3） | Web簡易コンソール、承認・リクエスト・監査ログ・ユーザーの画面（日本語・英語）、`dbgw query` などのCLI（connectRPC の `GatewayService`）、緊急昇格、期限付きロール（JIT）と unmask |
 | 運用（フェーズ3） | RDS / Cloud SQL の IAM データベース認証、レプリカへの振り分け、OpenTelemetry（OTLP）への監査ログ転送、管理用DBと監査ログの PostgreSQL 対応（複数台構成） |
-| 拡張（フェーズ4） | PostgreSQL プロトコル互換のプロキシ（psql / DBeaver）、MySQL アダプタ、SCIM 2.0、値の中身による個人情報の検出 |
+| 拡張（フェーズ4） | MySQL アダプタ、SCIM 2.0、値の中身による個人情報の検出 |
 
 ## クイックスタート（ローカル）
 
@@ -83,7 +83,7 @@ dbgw policy test testdata/policy/*.yaml
 
 ### ドキュメント
 
-- [CLI](docs/cli.md)、[PostgreSQL プロキシ](docs/pgproxy.md)、[MySQL](docs/mysql.md)、[通知](docs/notifications.md)、[SCIM と個人情報の検出](docs/scim.md)
+- [CLI](docs/cli.md)、[MySQL](docs/mysql.md)、[通知](docs/notifications.md)、[SCIM と個人情報の検出](docs/scim.md)
 - [運用（IAM認証、OTLP、緊急迂回経路）](docs/operations.md)、[冗長構成](docs/ha.md)
 
 ### 監査ログの検証

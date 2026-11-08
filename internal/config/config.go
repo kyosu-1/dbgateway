@@ -71,7 +71,6 @@ type Config struct {
 	DataClasses   []DataClass             `yaml:"data_classes"`
 	SemanticTypes map[string]SemanticType `yaml:"semantic_types"`
 	Policies      []Rule                  `yaml:"policies"`
-	PGProxy       PGProxy                 `yaml:"pgproxy"`
 	SCIM          SCIM                    `yaml:"scim"`
 	PIIDetection  PIIDetection            `yaml:"pii_detection"`
 
@@ -632,7 +631,6 @@ func (c *Config) validate() error {
 		// are done by the policy package (see policy.Compile).
 	}
 
-	c.validatePGProxy(add)
 	c.validateApprovals(groupNames, dbNames, add)
 	c.validateNotifications(add)
 	c.validateAuditors(groupNames, add)
