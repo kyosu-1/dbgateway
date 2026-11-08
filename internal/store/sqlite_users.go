@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -48,12 +49,13 @@ func (s *SQLite) CreateSession(ctx context.Context, sess *Session) error {
 func (s *SQLite) GetSession(ctx context.Context, idHash string) (*Session, error) {
 	var sess Session
 	var created, expires int64
-	err := s.db.QueryRowContext(ctx, `SELECT id_hash, email, created_at, expires_at FROM sessions WHERE id_hash = ?`, idHash).
-		Scan(&sess.IDHash, &sess.Email, &created, &expires)
+	var stepUpAt sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT id_hash, email, created_at, expires_at, step_up_method, step_up_at FROM sessions WHERE id_hash = ?`, idHash).
+		Scan(&sess.IDHash, &sess.Email, &created, &expires, &sess.StepUpMethod, &stepUpAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
-	sess.CreatedAt, sess.ExpiresAt = fromMS(created), fromMS(expires)
+	sess.CreatedAt, sess.ExpiresAt, sess.StepUpAt = fromMS(created), fromMS(expires), fromNullMS(stepUpAt)
 	return &sess, nil
 }
 
