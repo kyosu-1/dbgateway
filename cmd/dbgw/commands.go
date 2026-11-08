@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/policytest"
 	"github.com/kyosu-1/dbgateway/internal/server"
+	"github.com/kyosu-1/dbgateway/internal/store"
 )
 
 const defaultConfig = "dbgateway.yaml"
@@ -192,5 +195,60 @@ func auditCmd() *cobra.Command {
 		return nil
 	}
 	cmd.AddCommand(verify)
+	return cmd
+}
+
+func storeCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "store", Short: "Management database commands"}
+	imp := &cobra.Command{
+		Use:   "import-sqlite",
+		Short: "Copy a SQLite management database into the PostgreSQL one (store.driver: postgres)",
+		Long: "Copy every row of a SQLite management database (users, sessions, tokens, approval requests,\n" +
+			"grants, SCIM state) into the empty PostgreSQL management database of the configuration.\n" +
+			"Stop dbgateway first. The copy runs in one transaction and refuses a non-empty target.",
+		Args: cobra.NoArgs,
+	}
+	from := imp.Flags().String("from", "", "path of the SQLite database (e.g. var/dbgateway.db)")
+	path := configFlag(imp, false)
+	imp.RunE = func(cmd *cobra.Command, _ []string) error {
+		if *from == "" {
+			return fmt.Errorf("--from is required")
+		}
+		if _, err := os.Stat(*from); err != nil {
+			return err
+		}
+		cfg, err := config.Load(*path)
+		if err != nil {
+			return err
+		}
+		if cfg.Store.Driver != config.StorePostgres {
+			return fmt.Errorf("the configuration must select store.driver: %s", config.StorePostgres)
+		}
+		dsn, err := cfg.StoreDSN()
+		if err != nil {
+			return err
+		}
+		ctx := cmd.Context()
+		src, err := store.OpenSQLite(ctx, *from)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		dst, err := store.OpenPostgres(ctx, dsn)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+		counts, err := store.ImportSQLite(ctx, src, dst)
+		if err != nil {
+			return err
+		}
+		tables := slices.Sorted(maps.Keys(counts))
+		for _, t := range tables {
+			fmt.Printf("%-24s %d rows\n", t, counts[t])
+		}
+		return nil
+	}
+	cmd.AddCommand(imp)
 	return cmd
 }

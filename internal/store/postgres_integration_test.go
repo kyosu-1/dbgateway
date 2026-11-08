@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/kyosu-1/dbgateway/internal/identity"
 	"github.com/kyosu-1/dbgateway/internal/store"
 	"github.com/kyosu-1/dbgateway/internal/store/storetest"
 )
@@ -190,5 +192,71 @@ func TestOpenPostgresBadDSN(t *testing.T) {
 		t.Fatal("connected to a closed port")
 	} else if strings.Contains(err.Error(), "secretpw") {
 		t.Fatalf("error leaks the password: %v", err)
+	}
+}
+
+func TestImportSQLite(t *testing.T) {
+	ctx := context.Background()
+	src := openSQLite(t, filepath.Join(t.TempDir(), "dbgw.db"))
+	now := time.UnixMilli(time.Now().UnixMilli())
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(src.UpsertUser(ctx, &store.User{Email: "a@example.com", IDPGroups: []string{"g"}, LastLoginAt: now}))
+	used := now.Add(-time.Minute)
+	must(src.CreateToken(ctx, &store.Token{ID: "t1", Hash: "h1", Type: store.TokenRefresh, Kind: identity.KindHuman, Human: "a@example.com",
+		Scopes: []string{"db:read"}, FamilyID: "f", CreatedAt: now, ExpiresAt: now.Add(time.Hour), UsedAt: &used}))
+	must(src.CreateApprovalRequest(ctx, &store.ApprovalRequest{ID: "r1", RequesterKind: identity.KindAgent, RequesterHuman: "a@example.com",
+		Database: "db", RawSQL: "UPDATE t SET x = 1", NormalizedSQL: "UPDATE t SET x = $1", Reason: "r", EstimateRows: 2.5,
+		MaxAffectedRows: 3, Risk: "low", ApprovalRule: "rule", StepsJSON: []byte(`[]`), ConfigVersion: "v", BindingHash: "b",
+		Status: store.ApprovalPending, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+	must(src.CreateApprovalRequest(ctx, &store.ApprovalRequest{ID: "r2", RequesterKind: identity.KindHuman, RequesterHuman: "a@example.com",
+		Database: "db", RawSQL: "DELETE FROM t", NormalizedSQL: "DELETE FROM t", Reason: "r", MaxAffectedRows: 3, Risk: "low",
+		ApprovalRule: "rule", StepsJSON: []byte(`[]`), ConfigVersion: "v", BindingHash: "b", Status: store.ApprovalPending,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+	must(src.UpdateApprovals(ctx, "r2", 0, []byte(`[]`), store.ApprovalApproved, &now))
+	must(src.TransitionApprovalRequest(ctx, "r2", store.ApprovalApproved, store.ApprovalRunning, store.ApprovalTransition{At: now}))
+	must(src.TransitionApprovalRequest(ctx, "r2", store.ApprovalRunning, store.ApprovalSucceeded, store.ApprovalTransition{At: now, Result: []byte(`{"rows":1}`)}))
+	must(src.CreateSCIMUser(ctx, &store.SCIMUser{ID: "u1", Email: "a@example.com", UserName: "a", Active: true}, now))
+	must(src.CreateSCIMUser(ctx, &store.SCIMUser{ID: "u2", Email: "gone@example.com", UserName: "gone", Active: true}, now))
+	must(src.CreateSCIMGroup(ctx, &store.SCIMGroup{ID: "g1", DisplayName: "devs", Members: []store.SCIMMember{{UserID: "u1"}, {UserID: "u2"}}}, now))
+	must(src.DeleteSCIMUser(ctx, "u2", now))
+
+	dst := openPG(t, tempDatabase(t))
+	counts, err := store.ImportSQLite(ctx, src, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["users"] != 1 || counts["tokens"] != 1 || counts["approval_requests"] != 2 || counts["scim_users"] != 2 || counts["scim_group_members"] != 1 {
+		t.Fatalf("counts = %v", counts)
+	}
+	if u, err := dst.GetUser(ctx, "a@example.com"); err != nil || len(u.IDPGroups) != 1 || !u.LastLoginAt.Equal(now) {
+		t.Fatalf("user = %+v, %v", u, err)
+	}
+	if tk, err := dst.GetTokenByHash(ctx, "h1"); err != nil || tk.UsedAt == nil || !tk.UsedAt.Equal(used) || tk.RevokedAt != nil || tk.Scopes[0] != "db:read" {
+		t.Fatalf("token = %+v, %v", tk, err)
+	}
+	if r, err := dst.GetApprovalRequest(ctx, "r1"); err != nil || r.EstimateRows != 2.5 || r.ResultJSON != nil || r.DecidedAt != nil {
+		t.Fatalf("r1 = %+v, %v", r, err)
+	}
+	if r, err := dst.GetApprovalRequest(ctx, "r2"); err != nil || r.Status != store.ApprovalSucceeded ||
+		!storetest.JSONEqual(r.ResultJSON, []byte(`{"rows":1}`)) || r.Version != 3 {
+		t.Fatalf("r2 = %+v, %v", r, err)
+	}
+	if ok, err := dst.UserActive(ctx, "gone@example.com"); err != nil || ok {
+		t.Fatalf("tombstone lost: %v %v", ok, err)
+	}
+	if g, err := dst.GetSCIMGroup(ctx, "g1", true); err != nil || len(g.Members) != 1 || g.Members[0].UserID != "u1" {
+		t.Fatalf("group = %+v, %v", g, err)
+	}
+	// The imported store keeps working.
+	if err := dst.RecordLogin(ctx, "a@example.com", nil, now, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ImportSQLite(ctx, src, dst); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("second import: %v", err)
 	}
 }
