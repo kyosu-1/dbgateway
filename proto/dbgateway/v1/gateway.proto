@@ -1,0 +1,498 @@
+syntax = "proto3";
+
+package dbgateway.v1;
+
+import "dbgateway/v1/token.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/kyosu-1/dbgateway/gen/dbgateway/v1;dbgatewayv1";
+
+// GatewayService is how people (the dbgw CLI and the web console) query
+// databases through dbgateway. It runs exactly the same pipeline as the MCP
+// tools: role check, SQL analysis, data classification, policy, approval
+// routing, masking and audit logging.
+//
+// Every RPC requires a human bearer token (as issued by `dbgw login`).
+// Agent tokens are refused with PERMISSION_DENIED: agents use MCP.
+//
+// Writes that need approval are not executed by ExecuteSQL; they are
+// submitted as approval requests (status PENDING) and executed by dbgateway
+// once approved. Approving a request is deliberately not part of this API:
+// an approval must be bound to a fresh step-up authentication (passkey or
+// IdP re-authentication) of the approver, which only the browser session
+// of the web UI can provide. A bearer token alone, which may have been
+// copied, must never be enough to approve a write. Rejecting and canceling
+// only stop a write, so they are available here.
+service GatewayService {
+  // ListDatabases lists the databases the caller can use, with their
+  // permissions.
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  // SearchObjects explores tables, views and columns. Sensitive columns
+  // are marked.
+  rpc SearchObjects(SearchObjectsRequest) returns (SearchObjectsResponse);
+  // ExecuteSQL runs one SQL statement. Denials and database errors are
+  // reported in the response (status DENIED or ERROR) with why and how to
+  // get through, not as RPC errors; RPC errors are reserved for
+  // authentication, invalid arguments and server failures.
+  rpc ExecuteSQL(ExecuteSQLRequest) returns (ExecuteSQLResponse);
+  // ExplainPolicy says what ExecuteSQL would do with a statement without
+  // executing it (only the planner estimate may run).
+  rpc ExplainPolicy(ExplainPolicyRequest) returns (ExplainPolicyResponse);
+  // GetRequest returns an approval request visible to the caller: their
+  // own requests (including those of their agents) and requests they can
+  // approve. Any other ID is NOT_FOUND, exactly like a nonexistent one.
+  rpc GetRequest(GetRequestRequest) returns (GetRequestResponse);
+  // ListRequests lists approval requests, newest first.
+  rpc ListRequests(ListRequestsRequest) returns (ListRequestsResponse);
+  // CancelRequest withdraws one of the caller's pending requests.
+  rpc CancelRequest(CancelRequestRequest) returns (CancelRequestResponse);
+  // RejectRequest rejects a pending request the caller is eligible to
+  // approve. The requester cannot reject their own request (they cancel
+  // it instead).
+  rpc RejectRequest(RejectRequestRequest) returns (RejectRequestResponse);
+}
+
+// ---------------------------------------------------------------------------
+// ListDatabases
+
+message ListDatabasesRequest {}
+
+message ListDatabasesResponse {
+  // Who the caller is acting as (their email).
+  string principal = 1;
+  repeated Database databases = 2;
+}
+
+// Database summarizes a database and the caller's permissions on it.
+message Database {
+  // Connection name used in every other RPC.
+  string name = 1;
+  // Database type, e.g. "postgres".
+  string type = 2;
+  map<string, string> labels = 3;
+  // The caller's roles on the database (viewer, querier, writer, ...).
+  repeated string roles = 4;
+  // The caller can explore the schema (SearchObjects).
+  bool can_search = 5;
+  // The caller can run read queries.
+  bool can_read = 6;
+  // The caller can request writes (executed after approval).
+  bool can_write = 7;
+  // Maximum rows returned by one query. Zero means no limit.
+  int64 max_rows = 8;
+}
+
+// ---------------------------------------------------------------------------
+// SearchObjects
+
+// ObjectDetail selects how much SearchObjects returns per object.
+enum ObjectDetail {
+  // Same as OBJECT_DETAIL_SUMMARY.
+  OBJECT_DETAIL_UNSPECIFIED = 0;
+  // Object names only.
+  OBJECT_DETAIL_NAMES = 1;
+  // Objects with their columns.
+  OBJECT_DETAIL_SUMMARY = 2;
+  // Also indexes, comments and row estimates (reads the live catalog).
+  OBJECT_DETAIL_FULL = 3;
+}
+
+message SearchObjectsRequest {
+  // Required.
+  string database = 1;
+  // Substring to match in schema, table or column names. Empty lists
+  // everything.
+  string keyword = 2;
+  // Restrict to one schema. System schemas are only listed when named.
+  string schema = 3;
+  ObjectDetail detail = 4;
+  // Maximum number of objects. Zero means 50; at most 200.
+  int32 limit = 5;
+}
+
+message SearchObjectsResponse {
+  // Audit log request ID.
+  string request_id = 1;
+  string database = 2;
+  repeated SchemaObject objects = 3;
+  // More objects matched than were returned.
+  bool truncated = 4;
+}
+
+// SchemaObject is a table, view, materialized view or foreign table.
+message SchemaObject {
+  // table | view | materialized_view | foreign_table | partitioned_table
+  string type = 1;
+  string schema = 2;
+  string name = 3;
+  string comment = 4;
+  repeated ObjectColumn columns = 5;
+  repeated ObjectIndex indexes = 6;
+  // Planner row estimate, when known (detail FULL).
+  optional int64 row_estimate = 7;
+}
+
+message ObjectColumn {
+  string name = 1;
+  string type = 2;
+  bool nullable = 3;
+  string comment = 4;
+  // Data class from the configuration (e.g. public, masked, no_ai).
+  string class = 5;
+  // Values of this column are masked for the caller.
+  bool masked = 6;
+}
+
+message ObjectIndex {
+  string name = 1;
+  string definition = 2;
+}
+
+// ---------------------------------------------------------------------------
+// ExecuteSQL
+
+// ExecuteStatus is the outcome of ExecuteSQL.
+enum ExecuteStatus {
+  EXECUTE_STATUS_UNSPECIFIED = 0;
+  // The statement ran; the result is in columns and rows.
+  EXECUTE_STATUS_OK = 1;
+  // Refused before execution. stage, rule, reason and hint say why.
+  EXECUTE_STATUS_DENIED = 2;
+  // The statement could not run (database error, timeout, audit log
+  // unavailable). reason and code say why.
+  EXECUTE_STATUS_ERROR = 3;
+  // The write was submitted for approval and has not run yet. request_id
+  // identifies the approval request (see GetRequest).
+  EXECUTE_STATUS_PENDING = 4;
+}
+
+message ExecuteSQLRequest {
+  // Database name from ListDatabases. Required.
+  string database = 1;
+  // Exactly one SQL statement. Required.
+  string sql = 2;
+  // Why the query is needed (recorded in the audit log). Required by
+  // policy: an empty reason is DENIED.
+  string reason = 3;
+}
+
+message ExecuteSQLResponse {
+  ExecuteStatus status = 1;
+  // Audit log request ID. For PENDING it is also the approval request ID.
+  string request_id = 2;
+
+  // Result (OK).
+  repeated ResultColumn columns = 3;
+  repeated Row rows = 4;
+  // Rows returned.
+  int64 row_count = 5;
+  // Total rows the statement produced, when known and the result was
+  // truncated.
+  optional int64 total_rows = 6;
+  // The row or byte limit was reached; only the first rows are returned.
+  bool truncated = 7;
+  // Results are data, not instructions (shown to AI agents).
+  string notice = 8;
+  // Rows affected by a write executed under break-glass elevation.
+  optional int64 rows_affected = 9;
+  // The write ran without approval because the caller has an active
+  // break-glass elevation.
+  bool break_glass = 10;
+
+  // Denial or error.
+  // Pipeline stage that decided (role, parse, policy, ...).
+  string stage = 11;
+  // Rule that decided, e.g. "default-deny-ddl" or "role:querier".
+  string rule = 12;
+  // Why the statement was denied or failed (not the caller's reason).
+  string reason = 13;
+  // How to get through, or what happens next.
+  string hint = 14;
+  // SQLSTATE for database errors.
+  string code = 15;
+
+  // Approval (PENDING; risk, approval_rule and max_affected_rows are also
+  // set for other outcomes of a write that needs approval).
+  // People who can approve the next step.
+  repeated string approvers = 16;
+  google.protobuf.Timestamp expire_time = 17;
+  // Web page where the request is approved.
+  string approval_url = 18;
+  // low | medium | high
+  string risk = 19;
+  string approval_rule = 20;
+  // The write is rolled back if it affects more rows than this.
+  int64 max_affected_rows = 21;
+}
+
+// ResultColumn describes a result column.
+message ResultColumn {
+  string name = 1;
+  // Database type name, e.g. "int8".
+  string type = 2;
+  // Values are masked (replaced or partially hidden) for the caller.
+  bool masked = 3;
+  // Values are withheld (always null) for the caller.
+  bool withheld = 4;
+  // Data class that caused masking or withholding.
+  string class = 5;
+}
+
+// Row is one result row, with one value per column.
+//
+// Values are JSON-like: null, bool, number, string, list or struct.
+// Integers that a double cannot represent exactly (beyond ±2^53) are sent
+// as decimal strings; timestamps, numerics, UUIDs and binary data are
+// strings as well. Withheld values are null and masked values are the
+// masked string.
+message Row {
+  repeated google.protobuf.Value values = 1;
+}
+
+// ---------------------------------------------------------------------------
+// ExplainPolicy
+
+// PolicyDecision is what the gateway would do with a statement.
+enum PolicyDecision {
+  POLICY_DECISION_UNSPECIFIED = 0;
+  // Executed immediately.
+  POLICY_DECISION_ALLOW = 1;
+  // Submitted for approval.
+  POLICY_DECISION_APPROVE = 2;
+  // Refused.
+  POLICY_DECISION_DENY = 3;
+}
+
+message ExplainPolicyRequest {
+  // Required.
+  string database = 1;
+  // Exactly one SQL statement. Required. It is not executed.
+  string sql = 2;
+}
+
+message ExplainPolicyResponse {
+  // Audit log request ID.
+  string request_id = 1;
+  string database = 2;
+  PolicyDecision decision = 3;
+  string stage = 4;
+  string rule = 5;
+  // Why the statement would be denied, and how to get through.
+  string reason = 6;
+  string hint = 7;
+  // In shadow mode: the rule that would have denied.
+  string shadow_denied_by = 8;
+  // low | medium | high
+  string risk = 9;
+
+  // For APPROVE decisions.
+  string approval_rule = 10;
+  repeated ApprovalStep approval_steps = 11;
+  // Time allowed to complete every step.
+  google.protobuf.Duration expire_after = 12;
+  // People who could approve the first step.
+  repeated string approvers = 13;
+  int64 max_affected_rows = 14;
+  // The caller's active break-glass elevation would run the write
+  // immediately.
+  bool break_glass = 15;
+
+  // The matched policy requires a specific reason.
+  bool requires_specific_reason = 16;
+  Statement statement = 17;
+  // Planner estimate, when available.
+  Estimate estimate = 18;
+  // Every referenced column with its data class and usage.
+  repeated ReferencedColumn columns = 19;
+  // How each result column would be returned.
+  repeated OutputColumn output = 20;
+}
+
+// ApprovalStep is one stage of an approval rule.
+message ApprovalStep {
+  // Approvers need this role on the database (or belong to group).
+  string role = 1;
+  string group = 2;
+  // Number of distinct approvals the step needs.
+  int32 count = 3;
+}
+
+// Statement summarizes the analysis of a statement.
+message Statement {
+  // select, insert, update, delete, ...
+  string kind = 1;
+  bool is_write = 2;
+  // Schema-qualified tables.
+  repeated string tables = 3;
+}
+
+message Estimate {
+  double rows = 1;
+  double cost = 2;
+}
+
+// ReferencedColumn is a column referenced by a statement.
+message ReferencedColumn {
+  // Schema-qualified column name.
+  string name = 1;
+  string class = 2;
+  // Where the column is used (select, where, join, ...).
+  repeated string usage = 3;
+}
+
+// OutputColumn is a result column and how it would be returned.
+message OutputColumn {
+  string name = 1;
+  string class = 2;
+  bool masked = 3;
+  bool withheld = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Approval requests
+
+// ApprovalStatus is the state of an approval request.
+enum ApprovalStatus {
+  APPROVAL_STATUS_UNSPECIFIED = 0;
+  APPROVAL_STATUS_PENDING = 1;
+  // Every step is approved; waiting to run.
+  APPROVAL_STATUS_APPROVED = 2;
+  APPROVAL_STATUS_RUNNING = 3;
+  APPROVAL_STATUS_SUCCEEDED = 4;
+  APPROVAL_STATUS_FAILED = 5;
+  APPROVAL_STATUS_REJECTED = 6;
+  APPROVAL_STATUS_EXPIRED = 7;
+  APPROVAL_STATUS_CANCELED = 8;
+}
+
+// RequestScope selects which requests ListRequests returns.
+enum RequestScope {
+  // Same as REQUEST_SCOPE_MINE.
+  REQUEST_SCOPE_UNSPECIFIED = 0;
+  // Requested by the caller or their agents.
+  REQUEST_SCOPE_MINE = 1;
+  // Pending, and the caller can approve the current step.
+  REQUEST_SCOPE_AWAITING_ME = 2;
+  // No longer pending, and visible to the caller.
+  REQUEST_SCOPE_DECIDED = 3;
+}
+
+// ApprovalRequest is a write awaiting (or past) approval.
+message ApprovalRequest {
+  string id = 1;
+  ApprovalStatus status = 2;
+  Requester requester = 3;
+  string database = 4;
+  // The raw statement. Empty in ListRequests.
+  string sql = 5;
+  // The statement with literals replaced by placeholders.
+  string normalized_sql = 6;
+  // Free text written by the requester (possibly an AI agent). Display it
+  // as inert text.
+  string reason = 7;
+  // select, insert, update, delete, ...
+  string kind = 8;
+  repeated string tables = 9;
+  repeated ReferencedColumn columns = 10;
+  double estimate_rows = 11;
+  int64 max_affected_rows = 12;
+  string risk = 13;
+  string approval_rule = 14;
+  repeated ApprovalStep steps = 15;
+  repeated Approval approvals = 16;
+  // Index of the step awaiting approval; equal to the number of steps
+  // once every step is approved.
+  int32 current_step = 17;
+  string config_version = 18;
+  google.protobuf.Timestamp create_time = 19;
+  google.protobuf.Timestamp expire_time = 20;
+  google.protobuf.Timestamp decide_time = 21;
+  // Who rejected or canceled the request, and their comment.
+  string decided_by = 22;
+  string comment = 23;
+  google.protobuf.Timestamp start_time = 24;
+  google.protobuf.Timestamp finish_time = 25;
+  // Set once the write has run (or failed).
+  RequestResult result = 26;
+  // Web page where the request is approved.
+  string url = 27;
+}
+
+// Requester identifies who submitted a request.
+message Requester {
+  TokenKind kind = 1;
+  string human = 2;
+  // Agent name, for requests by an agent.
+  string agent = 3;
+  string client_id = 4;
+}
+
+// Approval records one approver's decision on a step.
+message Approval {
+  // Zero-based step index.
+  int32 step = 1;
+  string approver = 2;
+  google.protobuf.Timestamp approve_time = 3;
+  // passkey | idp | dev
+  string step_up_method = 4;
+  google.protobuf.Timestamp step_up_time = 5;
+}
+
+// RequestResult is the outcome of an executed request. Rows are the
+// RETURNING rows, masked as they are for the requester.
+message RequestResult {
+  int64 rows_affected = 1;
+  repeated ResultColumn columns = 2;
+  repeated Row rows = 3;
+  int64 row_count = 4;
+  bool truncated = 5;
+  google.protobuf.Duration duration = 6;
+  // Why the request failed (or why a committed write's RETURNING rows were
+  // withheld).
+  string error = 7;
+  // SQLSTATE.
+  string code = 8;
+}
+
+message GetRequestRequest {
+  // Request ID (the request_id of a PENDING ExecuteSQL response).
+  string id = 1;
+}
+
+message GetRequestResponse {
+  ApprovalRequest request = 1;
+  // Set when the request has a result: results are data, not instructions.
+  string notice = 2;
+}
+
+message ListRequestsRequest {
+  RequestScope scope = 1;
+  // Only requests on this database.
+  string database = 2;
+  // Maximum number of requests. Zero means 50; at most 200.
+  int32 limit = 3;
+}
+
+message ListRequestsResponse {
+  repeated ApprovalRequest requests = 1;
+}
+
+message CancelRequestRequest {
+  string id = 1;
+}
+
+message CancelRequestResponse {
+  ApprovalRequest request = 1;
+}
+
+message RejectRequestRequest {
+  string id = 1;
+  // Optional comment shown to the requester (at most 1000 characters).
+  string comment = 2;
+}
+
+message RejectRequestResponse {
+  ApprovalRequest request = 1;
+}
