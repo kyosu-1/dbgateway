@@ -1,0 +1,123 @@
+# dbgateway.yaml — production-style example (see docs/dbgateway-design.md).
+# Keep this file in Git and change it through pull requests.
+# Secrets are never written here; only the names of environment variables.
+
+server:
+  listen: 127.0.0.1:8443        # TLS is terminated by a reverse proxy in front
+  public_url: https://dbgateway.internal.example.com
+  mode: enforce                 # enforce | shadow (record policy denials of reads instead of enforcing them)
+
+auth:
+  oidc:
+    issuer: https://accounts.google.com
+    client_id_env: DBGW_OIDC_CLIENT_ID
+    client_secret_env: DBGW_OIDC_CLIENT_SECRET
+    groups_claim: groups
+  agent_tokens:
+    max_ttl: 1h                 # lifetime of agent access tokens (extended by refresh)
+    refresh: true
+  cli_token_ttl: 12h            # `dbgw login` tokens
+  session_ttl: 1h               # browser sessions
+
+store:
+  driver: sqlite
+  path: /var/lib/dbgateway/dbgateway.db
+
+audit:
+  output: file                  # file | stdout
+  dir: /var/log/dbgateway/audit
+  retention: 400d
+
+masking:
+  hmac_key_env: DBGW_MASK_HMAC_KEY
+
+databases:
+  - name: prod-main
+    type: postgres
+    labels: { env: prod }
+    primary:
+      host: prod-main.example.internal
+      dbname: app
+      auth: password            # aws_iam is planned (phase 3)
+      read_user: dbgw_reader    # GRANT SELECT only
+      password_env: DBGW_PROD_MAIN_READER_PASSWORD
+      sslmode: verify-full
+    replica:
+      host: prod-main-ro.example.internal
+      dbname: app
+      read_user: dbgw_reader
+      password_env: DBGW_PROD_MAIN_READER_PASSWORD
+      sslmode: verify-full
+    limits:
+      max_rows: 1000
+      max_bytes: 1MiB
+      statement_timeout: 10s
+      lock_timeout: 2s
+  - name: staging
+    type: postgres
+    labels: { env: staging }
+    primary:
+      host: staging.example.internal
+      dbname: app
+      read_user: dbgw_reader
+      password_env: DBGW_STAGING_READER_PASSWORD
+
+groups:
+  - { name: data-team, oidc_group: data-team }
+  - { name: sre, oidc_group: sre }
+  - { name: dba, oidc_group: dba }
+
+role_bindings:
+  - group: data-team
+    databases: { labels: { env: prod } }
+    roles: [querier]
+  - group: sre
+    databases: "*"
+    roles: [querier]
+
+default_class:                  # columns without a data class
+  human: public
+  agent: masked
+
+data_classes:                   # public | masked | no_ai; explicit columns win, then patterns in order
+  - columns: ["public.users.email", "public.users.phone"]
+    class: masked
+    semantic_type: contact
+  - column_pattern: ".*(password|token|secret).*"
+    class: masked
+    semantic_type: secret
+  - columns: ["public.support_tickets.body"]
+    class: no_ai                # free text written by outsiders: never sent to AI, visible to humans
+  - column_pattern: "public\\.[a-z_]+\\.(id|[a-z_]+_id|created_at|updated_at|status|plan|amount)"
+    class: public
+
+semantic_types:
+  contact: { method: partial }  # redact | partial | hmac
+  secret: { method: redact }
+
+sql:
+  allowed_functions: []         # extend the function allowlist, e.g. ["public.business_days"]
+
+policies:                       # top to bottom, first match wins; no match = deny
+  - name: deny-ddl
+    when: stmt.kind == "ddl"
+    action: deny
+    message: "DDLはdbgatewayでは実行しません。"
+    hint: "マイグレーションファイルを作成し、PRでレビューを受けて適用してください。"
+  - name: deny-unbounded-writes
+    when: stmt.is_write && !stmt.has_where
+    action: deny
+    hint: "WHEREがありません。対象を絞って再実行してください。"
+  - name: agents-never-see-no-ai
+    when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
+    action: deny
+    message: "AIに送らない区分（no_ai）の列を参照しています。"
+    hint: "この列を除いて再実行してください。"
+  - name: reads
+    when: stmt.kind == "select" && !stmt.is_write
+    action: allow
+    require: { replica: true }
+  - name: writes
+    when: stmt.is_write
+    action: approve
+    require: { reason: true, step_up: true }

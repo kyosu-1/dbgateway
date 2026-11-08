@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -35,9 +34,6 @@ var relKinds = map[string]analysis.RelKind{
 	"r": analysis.RelTable, "p": analysis.RelPartitioned, "v": analysis.RelView,
 	"m": analysis.RelMatView, "f": analysis.RelForeign,
 }
-
-// SystemSchemas are hidden from exploration unless asked for explicitly.
-var SystemSchemas = []string{"pg_catalog", "information_schema"}
 
 // Catalog loads relations and columns using the configured search path, so
 // view definitions are rendered relative to the same path used at
@@ -112,7 +108,7 @@ func (a *Adapter) Introspect(ctx context.Context, ac analysis.Conn, f analysis.O
 	if err != nil {
 		return nil, err
 	}
-	objs := FilterObjects(cat, f)
+	objs := analysis.FilterObjects(cat, f)
 	if f.Detail != "full" || len(objs) == 0 {
 		return objs, nil
 	}
@@ -166,57 +162,4 @@ func (a *Adapter) Introspect(ctx context.Context, ac analysis.Conn, f analysis.O
 		return nil, err
 	}
 	return objs, nil
-}
-
-// FilterObjects selects catalog relations by keyword (matching schema,
-// relation or column names, case-insensitively) and schema. System schemas
-// are excluded unless requested explicitly.
-func FilterObjects(cat *analysis.Catalog, f analysis.ObjectFilter) []analysis.Object {
-	kw := strings.ToLower(strings.TrimSpace(f.Keyword))
-	limit := f.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	keys := make([]string, 0, len(cat.Relations))
-	for k := range cat.Relations {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	var out []analysis.Object
-	for _, k := range keys {
-		rel := cat.Relations[k]
-		if f.Schema != "" {
-			if !strings.EqualFold(rel.Schema, f.Schema) {
-				continue
-			}
-		} else if slices.Contains(SystemSchemas, rel.Schema) {
-			continue
-		}
-		relMatch := kw == "" || strings.Contains(strings.ToLower(rel.Schema+"."+rel.Name), kw)
-		var cols []analysis.ObjectColumn
-		colMatch := false
-		for _, c := range rel.Columns {
-			if kw != "" && strings.Contains(strings.ToLower(c.Name), kw) {
-				colMatch = true
-			}
-			oc := analysis.ObjectColumn{Name: c.Name, Type: c.Type}
-			if f.Detail == "full" {
-				oc.Nullable = c.Nullable
-				oc.Comment = c.Comment
-			}
-			cols = append(cols, oc)
-		}
-		if !relMatch && !colMatch {
-			continue
-		}
-		o := analysis.Object{Type: string(rel.Kind), Schema: rel.Schema, Name: rel.Name}
-		if f.Detail != "names" {
-			o.Columns = cols
-		}
-		out = append(out, o)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out
 }

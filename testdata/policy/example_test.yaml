@@ -1,0 +1,122 @@
+# Policy tests for examples/dbgateway.yaml.
+# Run: dbgw policy test testdata/policy/example_test.yaml
+config: ../../examples/dbgateway.yaml
+
+catalog:
+  search_path: [public]
+  relations:
+    - { name: public.users, columns: [id, name, email, phone, plan, api_token, created_at] }
+    - { name: public.subscriptions, columns: [id, user_id, plan, status, churned_at, reason] }
+    - { name: public.support_tickets, columns: [id, user_id, subject, body] }
+    - name: public.user_contacts
+      kind: view
+      definition: "SELECT id, name, lower(email) AS email FROM users"
+      columns: [id, name, email]
+
+principals:
+  taro-agent: { kind: agent, human: taro@example.com, agent: claude-code, groups: [data-team] }
+  taro: { kind: human, human: taro@example.com, groups: [data-team] }
+  outsider: { kind: human, human: eve@example.com, groups: [] }
+
+cases:
+  - name: agent reads with public filter
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT id, email FROM users WHERE id = 42"
+    expect: { decision: allow, rule: reads, masked: [email], visible: [id] }
+
+  - name: masked column through view, alias and expression
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT c.email AS e, upper(c.name) AS n FROM user_contacts c WHERE c.id = 1"
+    expect: { decision: allow, masked: [e, n] }
+
+  - name: select star masks contact and secret columns
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT * FROM users WHERE id = 1"
+    expect: { decision: allow, masked: [email, phone, api_token, name], visible: [id, plan, created_at] }
+
+  - name: agent may not filter on a masked column
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT id FROM users WHERE email LIKE 'a%'"
+    expect: { decision: deny, rule: "builtin:sensitive-predicate" }
+
+  - name: agent may not order by a masked column
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT id FROM users ORDER BY email LIMIT 1"
+    expect: { decision: deny, rule: "builtin:sensitive-predicate" }
+
+  - name: human may filter on a masked column but still sees it masked
+    principal: taro
+    database: prod-main
+    sql: "SELECT id, email FROM users WHERE email LIKE 'a%'"
+    expect: { decision: allow, masked: [email] }
+
+  - name: agents never see no_ai columns
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT body FROM support_tickets WHERE id = 1"
+    expect: { decision: deny, rule: agents-never-see-no-ai }
+
+  - name: humans see no_ai columns
+    principal: taro
+    database: prod-main
+    sql: "SELECT body FROM support_tickets WHERE id = 1"
+    expect: { decision: allow, visible: [body] }
+
+  - name: aggregation over public columns
+    principal: taro-agent
+    database: prod-main
+    sql: "SELECT reason, count(*) FROM subscriptions WHERE status = 'churned' GROUP BY reason"
+    expect: { decision: deny, rule: "builtin:sensitive-predicate" }  # reason is unclassified → masked for agents on prod
+
+  - name: writes are not enabled in phase 1
+    principal: taro
+    database: prod-main
+    sql: "UPDATE users SET plan = 'pro' WHERE id = 1"
+    expect: { decision: deny, rule: "builtin:approval-not-enabled" }
+
+  - name: unbounded write
+    principal: taro
+    database: prod-main
+    sql: "DELETE FROM users"
+    expect: { decision: deny, rule: deny-unbounded-writes }
+
+  - name: ddl
+    principal: taro
+    database: prod-main
+    sql: "DROP TABLE users"
+    expect: { decision: deny, rule: deny-ddl }
+
+  - name: multiple statements are rejected at parse time
+    principal: taro
+    database: prod-main
+    sql: "SELECT 1; DROP TABLE users"
+    expect: { decision: deny, stage: parse, rule: "parse:multiple_statements" }
+
+  - name: side-effect function
+    principal: taro
+    database: prod-main
+    sql: "SELECT pg_catalog.pg_read_file('/etc/passwd')"
+    expect: { decision: deny, stage: parse }
+
+  - name: no role on the database
+    principal: outsider
+    database: prod-main
+    sql: "SELECT 1"
+    expect: { decision: deny, stage: role }
+
+  - name: data-team has no role on staging
+    principal: taro-agent
+    database: staging
+    sql: "SELECT 1"
+    expect: { decision: deny, stage: role }
+
+  - name: unknown table is never auto-allowed
+    principal: taro
+    database: prod-main
+    sql: "SELECT * FROM not_in_catalog"
+    expect: { decision: deny, rule: "builtin:unanalyzable" }

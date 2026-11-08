@@ -1,0 +1,77 @@
+# Local development configuration. Start PostgreSQL with
+#   docker compose -f examples/dev/compose.yaml up -d
+# then
+#   DBGW_DEV_READER_PASSWORD=reader go run ./cmd/dbgw serve --config examples/dev/dbgateway.yaml
+#
+# dev_login accepts any e-mail without a password: never use it outside
+# your machine (it is refused unless listening on loopback).
+
+server:
+  listen: 127.0.0.1:8443
+  public_url: http://127.0.0.1:8443
+  mode: enforce
+
+auth:
+  dev_login: true
+  allow_insecure_client_metadata: true
+  agent_tokens: { max_ttl: 1h, refresh: true }
+
+store:
+  path: var/dev/dbgateway.db
+
+audit:
+  dir: var/dev/audit
+  retention: 30d
+
+databases:
+  - name: dev-main
+    labels: { env: prod }       # behave like production (agents see unclassified columns masked)
+    primary:
+      host: 127.0.0.1
+      port: 55432
+      dbname: app
+      read_user: dbgw_reader
+      password_env: DBGW_DEV_READER_PASSWORD
+      sslmode: disable
+    limits:
+      max_rows: 100
+      max_bytes: 256KiB
+      statement_timeout: 3s
+
+groups:
+  - name: developers
+    members: [dev@example.com, taro@example.com]
+
+role_bindings:
+  - group: developers
+    databases: "*"
+    roles: [querier]
+
+data_classes:
+  - columns: ["public.users.email", "public.users.phone"]
+    class: masked
+    semantic_type: contact
+  - column_pattern: ".*(password|token|secret).*"
+    class: masked
+    semantic_type: secret
+  - columns: ["public.support_tickets.body"]
+    class: no_ai
+  - column_pattern: "public\\.[a-z_]+\\.(id|[a-z_]+_id|created_at|updated_at|status|plan|amount|name|reason|subject|churned_at)"
+    class: public
+
+semantic_types:
+  contact: { method: partial }
+  secret: { method: redact }
+
+policies:
+  - name: deny-ddl
+    when: stmt.kind == "ddl"
+    action: deny
+  - name: agents-never-see-no-ai
+    when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
+    action: deny
+    message: "AIに送らない区分（no_ai）の列を参照しています。"
+    hint: "この列を除いて再実行してください。"
+  - name: reads
+    when: stmt.kind == "select" && !stmt.is_write
+    action: allow

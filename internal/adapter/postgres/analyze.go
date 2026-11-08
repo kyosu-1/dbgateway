@@ -276,4 +276,4 @@ func normalize(sql string) string {
 
 // Normalize replaces literal values in sql with placeholders. It returns an
 // empty string when the SQL cannot be parsed.
-func Normalize(sql string) string { return normalize(sql) }
+func (a *Analyzer) Normalize(sql string) string { return normalize(sql) }
