@@ -44,3 +44,7 @@ deploy/gcp-cloudrun/tfplan
 /.claude/
 deploy/gcp/tfplan
 deploy/gcp/*.pem
+/deploy/aws-ecs/terraform.tfvars
+/deploy/aws-ecs/*.auto.tfvars
+deploy/aws-ecs/*.pem
+deploy/aws-ecs/tfplan
