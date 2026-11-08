@@ -34,6 +34,11 @@ deploy/aws/tfplan
 /deploy/gcp/*.auto.tfvars
 deploy/gcp/*.pem
 deploy/gcp/tfplan
+/deploy/gcp-cloudrun/terraform.tfvars
+/deploy/gcp-cloudrun/*.auto.tfvars
+/deploy/gcp-cloudrun/*.local.*
+deploy/gcp-cloudrun/*.pem
+deploy/gcp-cloudrun/tfplan
 
 # Claude Code agent worktrees
 /.claude/

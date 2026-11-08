@@ -1,0 +1,101 @@
+# dbgateway on Cloud Run (test environment), rendered by Terraform and
+# passed as DBGW_CONFIG_YAML. No secrets: the management database DSN comes
+# from DBGW_STORE_DSN (Secret Manager) and the Cloud SQL CA from DBGW_DB_CA.
+
+server:
+  listen: 0.0.0.0:8080
+  public_url: ${jsonencode(public_url)}
+  mode: enforce
+
+auth:
+  passkeys: true              # no IdP: people sign in with passkeys (dbgw passkey enroll)
+  agent_tokens: { max_ttl: 1h, refresh: true }
+
+store:
+  driver: postgres
+  dsn_env: DBGW_STORE_DSN
+  sslrootcert_env: DBGW_DB_CA
+
+audit:
+  output: postgres
+  retention: 7d
+
+databases:
+  - name: cloud-main
+    labels: { env: prod }       # behave like production (agents see unclassified columns masked)
+    primary:
+      host: ${jsonencode(db_host)}
+      dbname: app
+      auth: gcp_iam
+      # A Cloud Run service has a single identity, so reads and writes use
+      # the same IAM user; reads still run in READ ONLY transactions.
+      read_user: ${jsonencode(db_user)}
+      write_user: ${jsonencode(db_user)}
+      # Per-instance CA without an IP SAN: verify-ca verifies the instance.
+      sslmode: verify-ca
+      sslrootcert_env: DBGW_DB_CA
+    limits:
+      max_rows: 100
+      statement_timeout: 5s
+
+groups:
+  - name: developers
+    members: [${jsonencode(requester)}]
+  - name: approvers
+    members: [${jsonencode(approver)}]
+
+role_bindings:
+  - group: developers
+    databases: "*"
+    roles: [querier, writer]
+  - group: approvers
+    databases: "*"
+    roles: [querier, writer, approver]
+
+approvals:
+  enabled: true
+  step_up_max_age: 10m
+
+approval_rules:
+  - name: default
+    when: "true"
+    steps:
+      - { role: approver, count: 1 }
+    expire_after: 1h
+
+data_classes:
+  - columns: ["public.users.email", "public.users.phone"]
+    class: masked
+    semantic_type: contact
+  - column_pattern: ".*(password|token|secret).*"
+    class: masked
+    semantic_type: secret
+  - columns: ["public.support_tickets.body"]
+    class: no_ai
+  - column_pattern: "public\\.[a-z_]+\\.(id|[a-z_]+_id|created_at|updated_at|status|plan|amount|name|reason|subject|churned_at)"
+    class: public
+
+semantic_types:
+  contact: { method: partial }
+  secret: { method: redact }
+
+policies:
+  - name: deny-ddl
+    when: stmt.kind == "ddl"
+    action: deny
+  - name: deny-unbounded-writes
+    when: stmt.is_write && !stmt.has_where
+    action: deny
+    hint: "WHEREがありません。対象を絞って再実行してください。"
+  - name: agents-never-see-no-ai
+    when: principal.kind == "agent" && columns.exists(c, c.class == "no_ai")
+    action: deny
+    message: "AIに送らない区分（no_ai）の列を参照しています。"
+    hint: "この列を除いて再実行してください。"
+  - name: reads
+    when: stmt.kind == "select" && !stmt.is_write
+    action: allow
+  - name: writes
+    when: stmt.is_write
+    action: approve
+    require: { reason: true }
