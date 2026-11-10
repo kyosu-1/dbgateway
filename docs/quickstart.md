@@ -4,18 +4,21 @@ Run dbgateway on your machine against a sample PostgreSQL database, then query i
 
 ## Prerequisites
 
-- Go 1.27 or later with cgo (a C compiler), because the PostgreSQL parser is a C library
 - Docker, for the sample database
+- Linux (amd64 or arm64) or macOS (Apple silicon) for the release binary; on other platforms, Go 1.27 or later with cgo (a C compiler) to build it
 
 ## 1. Start dbgateway
 
+Get the repository (for the sample database and configuration) and the `dbgw` binary from the [latest release](https://github.com/kyosu-1/dbgateway/releases):
+
 ```sh
-git clone https://github.com/kyosu-1/dbgateway.git
+git clone --depth 1 https://github.com/kyosu-1/dbgateway.git
 cd dbgateway
-make run-dev
+make download         # bin/dbgw from the latest release, checksum verified
+make serve-dev
 ```
 
-`make run-dev` builds `bin/dbgw`, starts PostgreSQL 17 with sample data on `127.0.0.1:55432`, and serves dbgateway on <http://127.0.0.1:8443> with [examples/dev/dbgateway.yaml](../examples/dev/dbgateway.yaml).
+`make serve-dev` starts PostgreSQL 17 with sample data on `127.0.0.1:55432` and serves dbgateway on <http://127.0.0.1:8443> with [examples/dev/dbgateway.yaml](../examples/dev/dbgateway.yaml). With Go and cgo installed you can skip the download: `make run-dev` builds `bin/dbgw` from source and then does the same.
 
 The development configuration enables **dev login**: you sign in with any e-mail address and no password. It only works while dbgateway listens on a loopback address — never use it elsewhere.
 

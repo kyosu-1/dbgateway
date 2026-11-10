@@ -24,11 +24,12 @@ AI agents connect over [MCP](https://modelcontextprotocol.io) with OAuth; people
 
 ## Quickstart
 
-Requires Go (with cgo) and Docker.
+Requires Docker, and Linux or macOS (Apple silicon) for the release binary — or Go with cgo to build it (`make run-dev`).
 
 ```sh
-git clone https://github.com/kyosu-1/dbgateway.git && cd dbgateway
-make run-dev          # sample PostgreSQL + dbgateway on http://127.0.0.1:8443
+git clone --depth 1 https://github.com/kyosu-1/dbgateway.git && cd dbgateway
+make download         # bin/dbgw from the latest release
+make serve-dev        # sample PostgreSQL + dbgateway on http://127.0.0.1:8443
 claude mcp add --transport http dbgateway http://127.0.0.1:8443/mcp
 ```
 
