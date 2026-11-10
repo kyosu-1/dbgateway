@@ -162,43 +162,21 @@ func TestBackupAndRestore(t *testing.T) {
 	}
 }
 
-// The backup must hold exactly the rows the write changed; when the two
-// statements select different rows, the write is rolled back.
-func TestBackupMustMatchTheWrite(t *testing.T) {
+// A statement whose WHERE calls a volatile function could select different
+// rows for the backup and the write, so it is not backed up.
+func TestBackupRefusesVolatileFunctions(t *testing.T) {
 	su := prepare(t)
 	prepareBackup(t, su)
 	h := setupWith(t, "    backup: { schema: "+backupSchema+" }\n")
-	mismatches := 0
-	for range 8 {
-		before := plans(t, su)
-		r := h.submitAndApprove(t, taro, "UPDATE "+table+" SET plan = 'rnd' WHERE id = (SELECT id FROM "+table+" ORDER BY random() LIMIT 1)")
-		after := plans(t, su)
-		switch r.Status {
-		case approval.StatusFailed:
-			if !strings.Contains(r.Result.Error, "the backup does not hold the rows the statement changed") {
-				t.Fatalf("failure: %+v", r.Result)
-			}
-			for id, p := range before {
-				if after[id] != p {
-					t.Fatalf("row %d changed although the write failed", id)
-				}
-			}
-			mismatches++
-		case approval.StatusSucceeded:
-			for id := range backupRows(t, su, r.Result.Backup.Table) {
-				if after[id] != "rnd" {
-					t.Fatalf("backup holds row %d, which was not changed", id)
-				}
-			}
-		default:
-			t.Fatalf("status %s", r.Status)
-		}
-		if _, err := su.Exec(context.Background(), "UPDATE "+table+" SET plan = 'free'"); err != nil {
-			t.Fatal(err)
-		}
+	sql := "UPDATE " + table + " SET plan = 'rnd' WHERE id = (SELECT id FROM " + table + " ORDER BY random() LIMIT 1)"
+	r := h.submitAndApprove(t, taro, sql)
+	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.Table != "" ||
+		!strings.Contains(r.Result.Backup.RestoreUnavailable, "volatile function random()") {
+		t.Fatalf("volatile: %+v %+v", r, r.Result)
 	}
-	if mismatches == 0 {
-		t.Log("random() picked the same row every time; the mismatch path was not exercised")
+	h = setupWith(t, "    backup: { schema: "+backupSchema+", required: true }\n")
+	if resp := h.exec(t, taro, sql); resp.Status != gateway.StatusDenied || resp.Rule != "builtin:backup-unsupported" {
+		t.Fatalf("required: %+v", resp)
 	}
 }
 

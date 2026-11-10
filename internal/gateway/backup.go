@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kyosu-1/dbgateway/internal/analysis"
@@ -92,13 +93,14 @@ const hintBackupProtected = "Query the original tables instead. To undo a backed
 // the only statement allowed to touch one is the exact restore statement
 // dbgateway generated for it (recorded in the backup table). For that
 // statement it returns the column references with the backup columns
-// mapped to the columns they were copied from, so that classification and
-// policies treat them like the source. ok is false (with a message) when
-// the statement must be denied.
-func checkRestore(ctx context.Context, db *config.Database, sql string, qa *analysis.QueryAnalysis, restore RestoreFunc) (refs []analysis.ColumnRef, msg string, ok bool) {
-	refs = qa.Statement.Columns
+// and table mapped to the source table they were copied from, so that
+// classification and policies treat them like the source. ok is false
+// (with a message) when the statement must be denied.
+func checkRestore(ctx context.Context, db *config.Database, sql string, qa *analysis.QueryAnalysis, restore RestoreFunc) (st analysis.Statement, msg string, ok bool) {
+	st = qa.Statement
+	refs := st.Columns
 	if db.Backup == nil {
-		return refs, "", true
+		return st, "", true
 	}
 	schema := db.Backup.Schema
 	var table string
@@ -107,40 +109,54 @@ func checkRestore(ctx context.Context, db *config.Database, sql string, qa *anal
 			continue
 		}
 		if t.Write {
-			return nil, "Backup tables cannot be changed.", false
+			return st, "Backup tables cannot be changed.", false
 		}
 		if table != "" && table != t.Name {
-			return nil, "A statement may read only one backup table.", false
+			return st, "A statement may read only one backup table.", false
 		}
 		table = t.Name
 	}
 	if table == "" {
 		for _, c := range refs {
 			if c.Schema == schema {
-				return nil, "Backup tables can only be read by their restore statement.", false
+				return st, "Backup tables can only be read by their restore statement.", false
 			}
 		}
-		return refs, "", true
+		return st, "", true
 	}
 	if restore == nil {
-		return nil, "Backup tables can only be read by their restore statement.", false
+		return st, "Backup tables can only be read by their restore statement.", false
 	}
 	rec, err := restore(ctx, table)
-	if err != nil || rec == nil || rec.RestoreSQL == "" || strings.TrimSuffix(strings.TrimSpace(sql), ";") != rec.RestoreSQL {
-		return nil, "Backup tables can only be read by the restore statement dbgateway generated for them, unchanged.", false
+	if err != nil || rec == nil || rec.RestoreSQL == "" || strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(sql), ";")) != rec.RestoreSQL {
+		return st, "Backup tables can only be read by the restore statement dbgateway generated for them, unchanged.", false
 	}
 	src := strings.SplitN(rec.Source, ".", 2)
 	if len(src) != 2 {
-		return nil, "The backup does not record its source table.", false
+		return st, "The backup does not record its source table.", false
 	}
-	mapped := make([]analysis.ColumnRef, len(refs))
+	cols := make([]analysis.ColumnRef, len(refs))
 	for i, c := range refs {
 		if c.Schema == schema && c.Table == table {
 			c.Schema, c.Table = src[0], src[1]
 		}
-		mapped[i] = c
+		cols[i] = c
 	}
-	return mapped, "", true
+	// The backup table is read as the source table.
+	var tables []analysis.TableRef
+	for _, t := range st.Tables {
+		if t.Schema == schema && t.Name == table {
+			t.Schema, t.Name = src[0], src[1]
+		}
+		if i := slices.IndexFunc(tables, func(x analysis.TableRef) bool { return x.Schema == t.Schema && x.Name == t.Name }); i >= 0 {
+			tables[i].Read = tables[i].Read || t.Read
+			tables[i].Write = tables[i].Write || t.Write
+			continue
+		}
+		tables = append(tables, t)
+	}
+	st.Columns, st.Tables = cols, tables
+	return st, "", true
 }
 
 // BackupUnsupportedError is returned by ExecuteApproved when the database

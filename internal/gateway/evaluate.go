@@ -95,12 +95,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 		return ev
 	}
 	ev.Analysis = qa
-	refs, msg, ok := checkRestore(ctx, db, sql, qa, restore)
+	// Restores read their backup table as the table it was copied from.
+	mapped, msg, ok := checkRestore(ctx, db, sql, qa, restore)
 	if !ok {
 		ev.Decision = deny(analysis.StagePolicy, ruleBackupProtected, msg, hintBackupProtected)
 		return ev
 	}
-	ev.Columns = e.classifyColumns(db, p.Kind, refs)
+	ev.Columns = e.classifyColumns(db, p.Kind, mapped.Columns)
 
 	st := &qa.Statement
 	approvals := e.Config.Approvals.Enabled
@@ -125,7 +126,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 	in := policy.Input{
 		Principal: policy.Principal{Kind: string(p.Kind), Human: p.Human, Agent: p.Agent, ClientID: p.ClientID, Groups: p.Groups},
 		Database:  policy.Database{Name: db.Name, Type: db.Type, Labels: labels(db)},
-		Stmt:      stmtInput(st),
+		Stmt:      stmtInput(&mapped),
 		Columns:   ev.Columns,
 	}
 	// Writes are always estimated when approvals are enabled: the risk level

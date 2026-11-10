@@ -76,6 +76,27 @@ func (a *Analyzer) PlanBackup(sql string, cat *analysis.Catalog) (*analysis.Back
 	if rel == nil {
 		return nil, unsupported("no target table")
 	}
+	// The backup and the write must select the same rows: volatile
+	// functions (random(), clock_timestamp(), ...) can make them differ, and
+	// a cascade or trigger could then hide the difference from the check
+	// after the write. Functions added through sql.allowed_functions have
+	// unknown volatility.
+	qa, err := a.Analyze(context.Background(), sql, cat)
+	if err != nil {
+		return nil, unsupported("the statement could not be analyzed")
+	}
+	for _, f := range qa.Statement.Functions {
+		schema, name, qualified := strings.Cut(strings.ToLower(f), ".")
+		if !qualified {
+			name, schema = schema, ""
+		}
+		switch {
+		case volatileFunctions[name] && (schema == "" || schema == "pg_catalog"):
+			return nil, unsupported("the volatile function %s() can select different rows for the backup and the write", name)
+		case (schema != "" && schema != "pg_catalog") || !isDefaultFunction(name):
+			return nil, unsupported("the function %s has unknown volatility", f)
+		}
+	}
 	if where.GetCurrentOfExpr() != nil {
 		return nil, unsupported("WHERE CURRENT OF")
 	}
@@ -114,6 +135,22 @@ func (a *Analyzer) PlanBackup(sql string, cat *analysis.Catalog) (*analysis.Back
 	plan.Select = out
 	return plan, nil
 }
+
+// volatileFunctions are the volatile functions of the default allowlist.
+var volatileFunctions = map[string]bool{
+	"random": true, "random_normal": true, "clock_timestamp": true, "timeofday": true,
+	"gen_random_uuid": true, "uuidv4": true, "uuidv7": true,
+}
+
+var defaultFunctionSet = func() map[string]bool {
+	m := make(map[string]bool, len(defaultFunctions))
+	for _, f := range defaultFunctions {
+		m[f] = true
+	}
+	return m
+}()
+
+func isDefaultFunction(name string) bool { return defaultFunctionSet[name] }
 
 // takeBackup creates the backup table from the plan inside tx and returns
 // the number of rows saved.

@@ -50,6 +50,9 @@ func TestPlanBackup(t *testing.T) {
 		"INSERT INTO users (id) VALUES (1)",
 		"MERGE INTO users u USING orders o ON u.id = o.user_id WHEN MATCHED THEN DELETE",
 		"SELECT 1",
+		"UPDATE users SET plan = 'x' WHERE id = (SELECT id FROM users ORDER BY random() LIMIT 1)",
+		"DELETE FROM orders WHERE note = gen_random_uuid()::text",
+		"DELETE FROM orders WHERE created_at < clock_timestamp()",
 	} {
 		if _, err := a.PlanBackup(sql, testCatalog()); !errors.Is(err, analysis.ErrBackupUnsupported) {
 			t.Errorf("%s: err = %v, want unsupported", sql, err)
