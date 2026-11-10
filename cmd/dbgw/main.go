@@ -61,6 +61,7 @@ func newRoot() *cobra.Command {
 		serveCmd(),
 		configCmd(),
 		policyCmd(),
+		lintCmd(),
 		auditCmd(),
 		storeCmd(),
 		cli.LoginCmd(),

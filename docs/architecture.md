@@ -28,7 +28,7 @@ flowchart LR
 | MCP server | `internal/mcp` | Tools for AI agents over Streamable HTTP at `/mcp` (stateless). See [MCP](./mcp) |
 | connectRPC API | `proto/dbgateway/v1`, `internal/api` | `GatewayService` (queries, approval requests) and `TokenService` (agent tokens) for the CLI. Human tokens only |
 | Web UI | `internal/web` | SQL editor (`/console`), approvals, requests, audit log search, users, break-glass elevation. See [SQL editor](./console) |
-| CLI | `cmd/dbgw`, `internal/cli` | `dbgw query`, `dbgw login`, `dbgw mcp stdio`, `dbgw token`, plus admin commands (`config validate`, `policy test`, `audit verify`). See [CLI](./cli) |
+| CLI | `cmd/dbgw`, `internal/cli` | `dbgw query`, `dbgw login`, `dbgw mcp stdio`, `dbgw token`, plus admin commands (`config validate`, `policy test`, `audit verify`) and the offline migration checker `lint` ([Migration lint](./lint)). See [CLI](./cli) |
 | Authorization server | `internal/auth` | OIDC and passkey login, OAuth for agents, device flow for the CLI, step-up authentication. See [Authentication](./authentication) |
 | Gateway pipeline | `internal/gateway` | The one place every request is decided. All entry points call it |
 | DB adapters | `internal/adapter/postgres`, `internal/adapter/mysql` | Parsing (pg_query / TiDB parser), catalog, planner estimates, execution. They translate each dialect into a database-independent analysis (`internal/analysis`) |

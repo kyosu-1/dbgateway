@@ -29,6 +29,7 @@ Authenticates in the browser with the device flow (see [authentication.md](authe
 | `dbgw request cancel <ID>` | Withdraw your own request |
 | `dbgw request reject <ID> [--comment <comment>]` | Reject a request as an approver |
 | `dbgw token print` | Print the saved access token |
+| `dbgw lint [FILE \| DIR \| -]...` | Check SQL migration files for risky statements, offline (no login needed). See [Migration lint](lint.md) |
 
 Besides `dbgw query`, the display commands accept `--format json` (`-o json`) for JSON output. JSON field names are the proto field names (snake_case).
 
@@ -211,3 +212,11 @@ curl -H "Authorization: Bearer $(dbgw token print)" -H "Content-Type: applicatio
 Prints the access token saved by `dbgw login` to standard output, e.g. for calling the connectRPC API from scripts.
 
 The token is a secret: whoever has it can query as you until it expires. A warning and the expiry time are printed to standard error. Do not share it or leave it in logs or shell history. If it leaks, find its ID with `dbgw token list`, revoke it with `dbgw token revoke <ID>`, and run `dbgw login` again.
+
+## dbgw lint
+
+```sh
+dbgw lint db/migrations/20261111_add_plan.sql
+```
+
+Checks migration files for statements that are risky in production (long locks, table rewrites, destructive and breaking changes) with the same SQL parsers the gateway uses. It runs offline: no login, server or database connection. Exit status 1 means at least one error-level finding. Rules, configuration, suppression comments and a GitHub Actions example are in [Migration lint](lint.md).
