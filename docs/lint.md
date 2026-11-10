@@ -127,8 +127,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     env:
-      # A release that includes `dbgw lint` (added after v0.1.0), without the "v".
-      DBGW_VERSION: "X.Y.Z"
+      # A release that includes `dbgw lint` (0.2.0 or later), without the "v".
+      DBGW_VERSION: "0.2.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,7 +156,7 @@ Instead of downloading a release, you can build dbgw in the job. cgo is required
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - run: go install github.com/kyosu-1/dbgateway/cmd/dbgw@main # or a release tag that includes dbgw lint
+      - run: go install github.com/kyosu-1/dbgateway/cmd/dbgw@v0.2.0
 ```
 
 Run the same command locally before pushing, or from a pre-commit hook:
