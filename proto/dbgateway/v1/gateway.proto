@@ -249,6 +249,23 @@ message ExecuteSQLResponse {
   string approval_rule = 20;
   // The write is rolled back if it affects more rows than this.
   int64 max_affected_rows = 21;
+  // Backup of the rows a break-glass write changed.
+  Backup backup = 22;
+}
+
+// Backup describes the copy of the rows a write changed, taken before it
+// ran when the database has backups configured. It never contains values.
+message Backup {
+  // Schema and table holding the copy (empty when no backup was taken).
+  string schema = 1;
+  string table = 2;
+  // The table that was changed (schema.table).
+  string source = 3;
+  int64 rows = 4;
+  // Statement that undoes the change; submit it like any other write.
+  string restore_sql = 5;
+  // Why no restore statement (or no backup) is available.
+  string restore_unavailable = 6;
 }
 
 // ResultColumn describes a result column.
@@ -478,6 +495,8 @@ message RequestResult {
   string error = 7;
   // SQLSTATE.
   string code = 8;
+  // Backup of the rows the write changed.
+  Backup backup = 9;
 }
 
 message GetRequestRequest {

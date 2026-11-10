@@ -135,10 +135,45 @@ Exactly one worker executes an approved request, even with several dbgateway ins
 1. **Binding hash.** The hash over (database, raw SQL, requester, approval rule, configuration version) is checked. If anything changed after submission, the request fails. A different SQL is always a new request.
 2. **Audit first.** A `running` entry is written to the audit log. If it cannot be written, the write does not run.
 3. **Re-evaluation.** The requester's role (`writer`) and the policies are evaluated again with the current configuration. Groups come from the requester's last login (or SCIM) and the current configuration. If the decision is no longer `approve` under the same approval rule, the request fails ("the decision has changed"). An agent's request still runs if its token has expired, as long as the person it acts for still holds `writer`.
-4. **Write.** The statement runs as the write user in a read-write transaction with the database's `statement_timeout` and `lock_timeout`. If it affects more rows than the limit, it is **rolled back** and the request fails.
+4. **Write.** The statement runs as the write user in a read-write transaction with the database's `statement_timeout` and `lock_timeout`. If it affects more rows than the limit, it is **rolled back** and the request fails. With [backups](#backups-and-restore) configured, the changed rows are saved first, in the same transaction.
 5. **Result.** `RETURNING` rows are masked like read results for the requester and stored with the request. The outcome is audited and `execution_finished` is published.
 
 A request found `running` for longer than any execution could take (dbgateway stopped mid-write) is marked `failed` with an unknown outcome. It is never run again; check the database. Approved requests that were not started (for example, because of a restart) are picked up by the background loop.
+
+## Backups and restore
+
+With `backup` configured on a PostgreSQL database, dbgateway saves the rows an approved (or break-glass) `UPDATE` or `DELETE` is about to change, so the change can be undone.
+
+```yaml
+databases:
+  - name: prod-main
+    backup:
+      schema: dbgw_backup   # must exist; not in search_path
+      required: false       # true: refuse writes that cannot be backed up
+```
+
+```sql
+-- once, as an administrator
+CREATE SCHEMA dbgw_backup;
+GRANT USAGE, CREATE ON SCHEMA dbgw_backup TO dbgw_writer;
+```
+
+**How it works.** In the same transaction as the write, and in the same snapshot (`REPEATABLE READ`), dbgateway runs `CREATE TABLE dbgw_backup.<request id> AS SELECT target.*, target.tableoid, target.ctid FROM target WHERE <the statement's condition>`, then the write. The write commits only if the backup holds exactly the rows the write changed — the same number of rows, and every saved row version was updated or deleted by the write. Otherwise both are rolled back and the request fails; this happens when the two pick different rows, for example with a `LIMIT` without `ORDER BY`. Statements that call volatile functions (`random()`, `clock_timestamp()`, `gen_random_uuid()`, …) or functions added with `sql.allowed_functions` are not backed up at all, since the backup and the write could select different rows. The backup table therefore exists exactly when the write committed. Its comment records the request ID, the source table and the restore statement. The copy stays inside the database: row values never pass through dbgateway's store or audit log, and a failed backup is reported like any database error (without values).
+
+**Restore.** The result of the request shows the backup and a statement that undoes the change:
+
+- `DELETE`: `INSERT INTO target (columns) SELECT columns FROM backup` (generated columns are left out; identity columns use `OVERRIDING SYSTEM VALUE`). Rows deleted through the parent of plain (non-declarative) inheritance are backed up, but get no restore statement.
+- `UPDATE`: `UPDATE target AS t SET column = (SELECT b.column FROM backup AS b WHERE <primary key matches>), ... WHERE (<primary key>) IN (SELECT <primary key> FROM backup AS b)`. Only the columns the original statement assigned are set back, so later changes to other columns are kept (later changes to the same columns are overwritten). A table without a primary key, or a statement that changed the primary key, gets a backup but no restore statement.
+
+The restore statement is an ordinary write: open it in the SQL editor from the request page (**Open the restore in the SQL editor**) or submit it with `execute_sql` — unchanged — and it goes through analysis, policies and approval like any other. The backup's columns are classified like the columns they were copied from, so the same data-class rules apply as to the original table. A restore is itself backed up, so it can be undone too. It is also returned by `get_request` and the API (`result.backup`).
+
+**What can be backed up.** A plain `UPDATE` or `DELETE` on one table with no `WITH`, `FROM` (`UPDATE`) or `USING` (`DELETE`); select the target rows with a subquery in `WHERE` instead. `MERGE` and `INSERT` are not backed up. Statements that cannot be backed up still run and their result says "No backup was taken", unless `required: true`, which denies them when they are submitted (`builtin:backup-unsupported`, also reported by `explain_policy`).
+
+**Protection.** Backup tables are only a source for their restore: the only statement that may reference the backup schema is the exact restore statement recorded in the backup table (`builtin:backup-protected`). Policies see a restore as reading and writing the original table. `dbgw policy test` does not connect to the database, so it cannot recognize restores and reports them as denied. The schema is hidden from `search_objects` and the SQL editor's schema list. Grant the read user no access to it.
+
+**Limits.** The backup covers the rows of the target table only: rows changed by `ON DELETE CASCADE` or `SET NULL` foreign keys and by triggers are not saved, and a restore does not undo them. If the backup cannot be taken (for example, the write user lacks `SELECT` on the table or `CREATE` on the schema, or the table has a column named `_dbgw_tableoid` or `_dbgw_ctid`), the write fails, even with `required: false`. So does a write a `BEFORE` trigger skips rows of (the backup then holds more rows than the write changed). A concurrent change to one of the rows makes the write fail with a serialization error instead of diverging from its backup; submit it again.
+
+**Retention.** A backup is at most the affected-rows limit of the request. dbgateway does not delete backup tables; drop old ones with your usual maintenance (each table's comment has the request ID and creation is in the audit log). Backups are copies of personal data: include the schema in your retention and erasure procedures.
 
 ## Time-limited roles (JIT)
 

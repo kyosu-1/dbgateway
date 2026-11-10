@@ -25,6 +25,9 @@ func FilterObjects(cat *Catalog, f ObjectFilter) []Object {
 	var out []Object
 	for _, k := range keys {
 		rel := cat.Relations[k]
+		if slices.Contains(f.HiddenSchemas, rel.Schema) {
+			continue
+		}
 		if f.Schema != "" {
 			if !strings.EqualFold(rel.Schema, f.Schema) {
 				continue

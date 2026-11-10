@@ -144,7 +144,16 @@ func (c *conn) withTx(ctx context.Context, pool *pgxpool.Pool, mode pgx.TxAccess
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
+	total := timeout + 5*time.Second
+	iso := pgx.TxIsoLevel("")
+	if opt.Backup != nil && mode == pgx.ReadWrite {
+		// The backup and the write run as two statements; repeatable read
+		// makes both see the same snapshot (a concurrent change to one of
+		// the rows makes the write fail instead of diverging).
+		total += timeout
+		iso = pgx.RepeatableRead
+	}
+	ctx, cancel := context.WithTimeout(ctx, total)
 	defer cancel()
 
 	pc, err := pool.Acquire(ctx)
@@ -162,7 +171,7 @@ func (c *conn) withTx(ctx context.Context, pool *pgxpool.Pool, mode pgx.TxAccess
 		pc.Release()
 	}()
 
-	tx, err := pc.BeginTx(ctx, pgx.TxOptions{AccessMode: mode})
+	tx, err := pc.BeginTx(ctx, pgx.TxOptions{AccessMode: mode, IsoLevel: iso})
 	if err != nil {
 		return err
 	}
@@ -243,6 +252,13 @@ func (c *conn) executeWrite(ctx context.Context, sql string, opt analysis.ExecOp
 	res := &analysis.Result{TotalRows: -1}
 	start := time.Now()
 	err = c.withTx(ctx, pool, pgx.ReadWrite, opt, func(tx pgx.Tx) error {
+		var saved int64
+		if opt.Backup != nil {
+			var err error
+			if saved, err = takeBackup(ctx, tx, opt.Backup); err != nil {
+				return err
+			}
+		}
 		rows, err := tx.Query(ctx, sql)
 		if err != nil {
 			return err
@@ -259,6 +275,14 @@ func (c *conn) executeWrite(ctx context.Context, sql string, opt analysis.ExecOp
 		res.RowsAffected = rows.CommandTag().RowsAffected()
 		if res.RowsAffected > opt.MaxAffectedRows {
 			return &analysis.AffectedRowsError{Affected: res.RowsAffected, Max: opt.MaxAffectedRows}
+		}
+		if b := opt.Backup; b != nil {
+			if err := verifyBackup(ctx, tx, b, saved, res.RowsAffected); err != nil {
+				return err
+			}
+			if res.Backup, err = finishBackup(ctx, tx, b, saved); err != nil {
+				return err
+			}
 		}
 		return tx.Commit(ctx)
 	})

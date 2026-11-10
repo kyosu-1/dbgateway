@@ -57,6 +57,7 @@ func (s *Service) execute(ctx context.Context, id string) bool {
 	if wr != nil {
 		res.RowsAffected, res.Columns, res.Rows, res.RowCount, res.Truncated, res.DurationMS =
 			wr.RowsAffected, wr.Columns, wr.Rows, wr.RowCount, wr.Truncated, wr.DurationMS
+		res.Backup = wr.Backup
 	}
 	if err != nil {
 		res.Error, res.Code = gateway.DescribeError(err)
@@ -108,7 +109,16 @@ func (s *Service) finish(ctx context.Context, r *Request, status Status, res *Re
 		msg := res.Error
 		ri.Error = &msg
 	}
-	_ = s.writeAudit(r, string(status), "dbgateway", map[string]any{"rows_affected": res.RowsAffected}, ri)
+	extra := map[string]any{"rows_affected": res.RowsAffected}
+	if res.Backup != nil {
+		if res.Backup.Table != "" {
+			extra["backup_table"] = res.Backup.Schema + "." + res.Backup.Table
+			extra["backup_rows"] = res.Backup.Rows
+		} else {
+			extra["backup"] = "none"
+		}
+	}
+	_ = s.writeAudit(r, string(status), "dbgateway", extra, ri)
 	detail := map[string]string{"rows_affected": itoa(res.RowsAffected)}
 	if res.Error != "" {
 		detail["error"] = res.Error

@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/approval"
 	"github.com/kyosu-1/dbgateway/internal/gateway"
+	"github.com/kyosu-1/dbgateway/internal/gateway/gatewaytest"
 	"github.com/kyosu-1/dbgateway/internal/store"
 )
 
@@ -591,4 +593,29 @@ func TestCSVSafe(t *testing.T) {
 			t.Errorf("csvSafe(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func TestApprovalShowsBackupAndRestore(t *testing.T) {
+	e := newEnv(t, nil)
+	e.fa.Set(func(a *gatewaytest.Adapter) {
+		a.Result.Backup = &analysis.BackupResult{Schema: "dbgw_backup", Table: "req_x", Source: "public.users", Rows: 1,
+			RestoreSQL: `UPDATE "public"."users" AS t SET "plan" = b."plan" FROM "dbgw_backup"."req_x" AS b WHERE t."id" = b."id"`}
+	})
+	id := e.submit(update, agentReason)
+	c, csrf := e.login("hanako@example.com")
+	do(t, c, "POST", e.url("/stepup/dev"), url.Values{"csrf": {csrf}, "next": {"/approvals/" + id}})
+	if resp, _ := do(t, c, "POST", e.url("/approvals/"+id+"/approve"), url.Values{"csrf": {csrf}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("approve: %d", resp.StatusCode)
+	}
+	e.svc.Wait()
+	_, page := do(t, c, "GET", e.url("/approvals/"+id), nil)
+	mustContain(t, page, "Backup", "The 1 changed rows were saved to dbgw_backup.req_x", `href="/console?restore=`+id+`"`)
+
+	// The requester opens the restore statement in the SQL editor.
+	c2, _ := e.login("taro@example.com")
+	_, page = do(t, c2, "GET", e.url("/console?restore="+id), nil)
+	mustContain(t, page, `data-prefill="restore"`, "FROM &#34;dbgw_backup&#34;.&#34;req_x&#34; AS b", "Restore the rows changed by request "+id)
+	// An unknown request opens an empty editor.
+	_, page = do(t, c2, "GET", e.url("/console?restore=req_nope"), nil)
+	mustNotContain(t, page, `data-prefill=`)
 }

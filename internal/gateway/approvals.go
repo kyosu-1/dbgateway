@@ -77,6 +77,9 @@ type WriteResult struct {
 	Truncated    bool           `json:"truncated,omitzero"`
 	RowsAffected int64          `json:"rows_affected"`
 	DurationMS   int64          `json:"duration_ms"`
+	// Backup describes the backup taken before the write, when the
+	// database has backups configured.
+	Backup *Backup `json:"backup,omitempty"`
 	// Bytes and MaskedColumns are for the audit log.
 	Bytes         int64    `json:"-"`
 	MaskedColumns []string `json:"-"`
@@ -125,11 +128,13 @@ func (g *Gateway) ExecuteApproved(ctx context.Context, p *identity.Principal, w 
 		}
 		return nil, ce
 	}
-	return g.runWrite(ctx, p, d, conn, w.SQL, ev, w.MaxAffectedRows)
+	return g.runWrite(ctx, p, d, conn, w.RequestID, w.SQL, ev, w.MaxAffectedRows)
 }
 
-// runWrite executes an evaluated write and masks its RETURNING rows.
-func (g *Gateway) runWrite(ctx context.Context, p *identity.Principal, d *database, conn analysis.Conn, sql string, ev *Evaluation, maxAffected int64) (*WriteResult, error) {
+// runWrite executes an evaluated write (request id) and masks its
+// RETURNING rows. When the database has backups configured, the rows the
+// write changes are saved first.
+func (g *Gateway) runWrite(ctx context.Context, p *identity.Principal, d *database, conn analysis.Conn, id, sql string, ev *Evaluation, maxAffected int64) (*WriteResult, error) {
 	plans, err := g.plan(d.cfg, ev.Analysis.Output, p)
 	if err != nil {
 		return nil, errUntraceable
@@ -140,20 +145,36 @@ func (g *Gateway) runWrite(ctx context.Context, p *identity.Principal, d *databa
 	if m := ev.Decision.Require.MaxRows; m > 0 && (opts.MaxRows <= 0 || m < opts.MaxRows) {
 		opts.MaxRows = m
 	}
+	var noBackup string
+	if bp, why := g.planBackup(ctx, d, sql, ev); bp != nil {
+		opts.Backup = backupSpec(d.cfg.Backup, id, bp)
+	} else if why != "" {
+		if d.cfg.Backup.Required {
+			return nil, &BackupUnsupportedError{Reason: why}
+		}
+		noBackup = why
+	}
 	res, err := d.adapter.Execute(ctx, conn, sql, opts)
 	if err != nil {
 		return nil, err
 	}
+	backup := res.Backup
+	if backup != nil {
+		d.invalidateCatalog()
+	}
+	if backup == nil && noBackup != "" {
+		backup = &Backup{Source: firstWritten(ev.Analysis), RestoreUnavailable: "No backup was taken (" + noBackup + ")."}
+	}
 	if len(res.Columns) != len(plans) {
 		// The write is committed; only the RETURNING rows are withheld.
-		return &WriteResult{RowsAffected: res.RowsAffected, DurationMS: res.Duration.Milliseconds()}, errColumnMismatch
+		return &WriteResult{RowsAffected: res.RowsAffected, DurationMS: res.Duration.Milliseconds(), Backup: backup}, errColumnMismatch
 	}
 	wr := &WriteResult{RowCount: res.RowCount, Truncated: res.Truncated, RowsAffected: res.RowsAffected,
-		DurationMS: res.Duration.Milliseconds(), Bytes: res.Bytes}
+		DurationMS: res.Duration.Milliseconds(), Bytes: res.Bytes, Backup: backup}
 	cols, rows, masked, err := g.applyMasking(p.Kind, plans, res)
 	if err != nil {
 		// The write is committed; only the RETURNING rows are withheld.
-		return &WriteResult{RowsAffected: res.RowsAffected, DurationMS: res.Duration.Milliseconds()}, err
+		return &WriteResult{RowsAffected: res.RowsAffected, DurationMS: res.Duration.Milliseconds(), Backup: backup}, err
 	}
 	wr.Columns, wr.Rows, wr.MaskedColumns = cols, rows, masked
 	return wr, nil
@@ -190,6 +211,22 @@ func DescribeError(err error) (string, string) {
 	case errors.Is(err, errColumnMismatch):
 		return "The write completed, but the RETURNING columns do not match the analysis, so no rows are returned.", ""
 	}
+	var bu *BackupUnsupportedError
+	if errors.As(err, &bu) {
+		msg, _ := backupUnsupported(bu.Reason)
+		return "Not executed. " + msg, ""
+	}
+	var be *analysis.BackupError
+	if errors.As(err, &be) {
+		msg := "Not executed because the backup failed: " + be.Reason + ". Nothing was changed."
+		if be.Err != nil {
+			// The database error may quote values: describe it like any
+			// other database error.
+			dbMsg, code := describeDBError(be.Err)
+			return msg + " " + dbMsg, code
+		}
+		return msg, ""
+	}
 	return describeDBError(err)
 }
 
@@ -208,7 +245,7 @@ func (g *Gateway) breakGlassWrite(ctx context.Context, p *identity.Principal, d 
 	}
 	entry.Extra["phase"] = "finish"
 	resp.BreakGlass = true
-	wr, err := g.runWrite(ctx, p, d, conn, req.SQL, ev, resp.MaxAffectedRows)
+	wr, err := g.runWrite(ctx, p, d, conn, resp.RequestID, req.SQL, ev, resp.MaxAffectedRows)
 	if err != nil {
 		msg, code := DescribeError(err)
 		if wr != nil { // committed, but the RETURNING rows are withheld
@@ -219,6 +256,8 @@ func (g *Gateway) breakGlassWrite(ctx context.Context, p *identity.Principal, d 
 	}
 	resp.Status, resp.Notice = StatusOK, DataNotice
 	resp.Columns, resp.Rows, resp.RowCount, resp.Truncated = wr.Columns, wr.Rows, wr.RowCount, wr.Truncated
+	resp.Backup = wr.Backup
+	addBackupAudit(entry.Extra, wr.Backup)
 	affected := wr.RowsAffected
 	resp.RowsAffected = &affected
 	resp.Hint = "Executed without approval because a break-glass elevation is active (recorded in the audit log)."
