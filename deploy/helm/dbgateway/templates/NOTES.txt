@@ -1,0 +1,71 @@
+{{- $fullname := include "dbgateway.fullname" . -}}
+{{- $publicURL := include "dbgateway.publicURL" . -}}
+dbgateway {{ include "dbgateway.imageTag" . }} is deployed as {{ $fullname }} in namespace {{ .Release.Namespace }}
+({{ include "dbgateway.replicas" . }} replica(s), store: {{ include "dbgateway.storeDriver" . | default "see your ConfigMap" }}, audit: {{ include "dbgateway.auditOutput" . | default "see your ConfigMap" }}).
+{{- if and .Values.secret.create .Values.secret.stringData }}
+
+##############################################################################
+# WARNING: secret.create is enabled.
+# The Secret {{ include "dbgateway.secretName" . }} was created from chart values. Those values are
+# stored in the Helm release and probably in a values file. Use this only for
+# a quickstart. In production, create Secrets outside the chart and reference
+# them with envFrom / env.
+##############################################################################
+{{- end }}
+{{- if and (eq (include "dbgateway.storeDriver" .) "sqlite") (not .Values.persistence.enabled) }}
+
+WARNING: the SQLite store{{ if eq (include "dbgateway.auditOutput" .) "file" }} and the audit log{{ end }} are on an emptyDir (persistence.enabled: false).
+Users, tokens, approval requests{{ if eq (include "dbgateway.auditOutput" .) "file" }} and audit records{{ end }} are lost whenever the pod is replaced.
+{{- end }}
+
+1. Check that the pod is running and the configuration was accepted:
+
+     kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ $fullname }}
+     kubectl -n {{ .Release.Namespace }} logs deployment/{{ $fullname }}
+
+   Configuration errors (and warnings such as unset *_env variables) are printed
+   at startup. Check a configuration before installing with:
+
+     dbgw config validate --config dbgateway.yaml
+
+2. Open dbgateway:
+{{- if $publicURL }}
+
+     {{ $publicURL }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+
+   The Ingress routes {{ range $i, $h := .Values.ingress.hosts }}{{ if $i }}, {{ end }}{{ $h.host }}{{ end }} to the Service.
+   {{- if not .Values.ingress.tls }}
+   ingress.tls is empty: make sure TLS is terminated in front of the Ingress
+   (dbgateway must only be used over HTTPS).
+   {{- end }}
+{{- else }}
+
+   No Ingress is enabled. Put HTTPS in front of the Service {{ $fullname }}:{{ .Values.service.port }}
+   (plain HTTP) so that it answers at server.public_url. To try it locally:
+
+     kubectl -n {{ .Release.Namespace }} port-forward service/{{ $fullname }} {{ .Values.service.port }}:{{ .Values.service.port }}
+     curl http://127.0.0.1:{{ .Values.service.port }}/healthz
+
+   (Sign-in redirects go to public_url, so the browser needs the real URL.)
+{{- end }}
+
+3. Sign in. Without an IdP (auth.passkeys), create the first passkey enrollment link:
+
+     kubectl -n {{ .Release.Namespace }} exec deployment/{{ $fullname }} -- \
+       dbgw passkey enroll --config /etc/dbgateway/dbgateway.yaml --email you@example.com
+
+   Then connect agents (MCP) to {{ $publicURL | default "<public_url>" }}/mcp and people's CLI with:
+
+     dbgw login --server {{ $publicURL | default "<public_url>" }}
+{{- if .Values.metrics.enabled }}
+
+4. Prometheus metrics are served on the Service {{ $fullname }}-metrics:{{ .Values.ports.metrics }} (/metrics, no
+   authentication, never routed by the Ingress).
+   {{- if not .Values.networkPolicy.enabled }}
+   Restrict who can reach it with networkPolicy.enabled and networkPolicy.metricsFrom.
+   {{- end }}
+{{- end }}
+
+Documentation: https://kyosu-1.github.io/dbgateway/kubernetes

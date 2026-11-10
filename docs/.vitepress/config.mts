@@ -75,6 +75,7 @@ export default withMermaid(defineConfig({
         text: "Deployment",
         items: [
           { text: "Deploying dbgateway", link: "/deploy" },
+          { text: "Kubernetes (Helm)", link: "/kubernetes" },
           { text: "Operations", link: "/operations" },
           { text: "High availability", link: "/ha" },
         ],

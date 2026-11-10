@@ -6,7 +6,7 @@ LDFLAGS   := -s -w -X main.version=$(VERSION)
 DEV_CFG   := examples/dev/dbgateway.yaml
 COMPOSE   := docker compose -f examples/dev/compose.yaml
 
-.PHONY: all build download serve-dev test test-race test-integration lint generate policy-test dev-db dev-db-down run-dev
+.PHONY: all build download serve-dev test test-race test-integration lint generate policy-test helm-check dev-db dev-db-down run-dev
 
 all: lint test build
 
@@ -38,6 +38,9 @@ generate: ## Regenerate protobuf / connectRPC code
 
 policy-test: build ## Run the repository's policy tests
 	$(BIN) policy test testdata/policy/*.yaml
+
+helm-check: build ## Lint and render the Helm chart, validate manifests (kubeconform) and the rendered configuration
+	sh deploy/helm/check.sh
 
 dev-db: ## Start the local PostgreSQL
 	$(COMPOSE) up -d --wait

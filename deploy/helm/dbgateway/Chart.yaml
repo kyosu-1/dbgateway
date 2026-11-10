@@ -1,0 +1,24 @@
+apiVersion: v2
+name: dbgateway
+description: An SQL-aware gateway that lets AI agents and people use production PostgreSQL and MySQL databases safely.
+type: application
+# Version of the chart, independent of the application version.
+version: 0.1.0
+# The dbgateway release. The image tag defaults to this.
+appVersion: "0.2.0"
+kubeVersion: ">=1.25.0-0"
+home: https://kyosu-1.github.io/dbgateway/
+icon: https://kyosu-1.github.io/dbgateway/logo.svg
+sources:
+  - https://github.com/kyosu-1/dbgateway
+keywords:
+  - database
+  - postgresql
+  - mysql
+  - mcp
+  - ai-agents
+  - sql
+  - gateway
+  - audit
+annotations:
+  artifacthub.io/license: Apache-2.0

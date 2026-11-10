@@ -1,0 +1,118 @@
+# Multiple instances: PostgreSQL management database and audit log, OIDC
+# sign-in, Ingress with TLS (public_url derived from the host), metrics with a
+# ServiceMonitor, a NetworkPolicy and a PodDisruptionBudget. Secrets come from
+# an existing Secret.
+replicaCount: 3
+
+config:
+  auth:
+    oidc:
+      issuer: https://idp.example.com
+      client_id_env: DBGW_OIDC_CLIENT_ID
+      client_secret_env: DBGW_OIDC_CLIENT_SECRET
+    agent_tokens: { max_ttl: 1h, refresh: true }
+  store:
+    driver: postgres
+    path: null
+    dsn_env: DBGW_STORE_DSN
+  audit:
+    output: postgres
+    dir: null
+    retention: 400d
+  masking:
+    hmac_key_env: DBGW_MASK_HMAC_KEY
+  databases:
+    - name: prod-main
+      labels: { env: prod }
+      primary:
+        host: prod-main.example.internal
+        dbname: app
+        auth: aws_iam
+        region: us-east-1
+        read_user: dbgw_reader
+        write_user: dbgw_writer
+      limits:
+        max_rows: 1000
+        statement_timeout: 10s
+  groups:
+    - { name: data-team, oidc_group: data-team }
+    - { name: sre, oidc_group: sre }
+  role_bindings:
+    - { group: data-team, databases: { labels: { env: prod } }, roles: [querier, writer] }
+    - { group: sre, databases: "*", roles: [querier, writer, approver] }
+  data_classes:
+    - { columns: ["public.users.email"], class: masked, semantic_type: contact }
+    - { column_pattern: "public\\.[a-z_]+\\.(id|[a-z_]+_id|created_at)", class: public }
+  semantic_types:
+    contact: { method: partial }
+  approvals:
+    enabled: true
+  approval_rules:
+    - name: default
+      when: "true"
+      steps: [{ role: approver }]
+  policies:
+    - { name: deny-ddl, when: 'stmt.kind == "ddl"', action: deny }
+    - { name: reads, when: 'stmt.kind == "select" && !stmt.is_write', action: allow }
+    - { name: writes, when: stmt.is_write, action: approve, require: { reason: true } }
+  console:
+    export_max_rows: 1000000
+
+persistence:
+  enabled: false
+
+envFrom:
+  - secretRef:
+      name: dbgateway-secrets
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/dbgateway
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  hosts:
+    - host: dbgateway.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: dbgateway-tls
+      hosts:
+        - dbgateway.example.com
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: dbgateway
+        app.kubernetes.io/instance: dbgateway
+
+lifecycle:
+  preStop:
+    sleep:
+      seconds: 5

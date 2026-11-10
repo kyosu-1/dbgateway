@@ -1,0 +1,13 @@
+# The configuration comes from a ConfigMap managed outside the chart (it is
+# not checked by the chart). The PostgreSQL store and audit log let it run
+# two replicas without a persistent volume.
+existingConfigMap: dbgateway-config
+existingConfigMapKey: config.yaml
+replicaCount: 2
+persistence:
+  enabled: false
+envFrom:
+  - secretRef:
+      name: dbgateway-secrets
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

@@ -1,0 +1,54 @@
+# Single instance: SQLite store and audit files on a persistent volume,
+# passkey sign-in (no IdP), one PostgreSQL database. Secrets come from a
+# Secret created by the chart (quickstart only).
+config:
+  server:
+    public_url: https://dbgateway.example.com
+  auth:
+    passkeys: true
+  databases:
+    - name: app
+      labels: { env: prod }
+      primary:
+        host: postgres.databases.svc.cluster.local
+        dbname: app
+        read_user: dbgw_reader
+        password_env: DBGW_APP_READER_PASSWORD
+        write_user: dbgw_writer
+        write_password_env: DBGW_APP_WRITER_PASSWORD
+        sslmode: verify-full
+        sslrootcert: /etc/dbgateway-ca/ca.crt
+  groups:
+    - name: developers
+      members: [developer@example.com]
+    - name: sre
+      members: [sre@example.com]
+  role_bindings:
+    - { group: developers, databases: "*", roles: [querier, writer] }
+    - { group: sre, databases: "*", roles: [querier, writer, approver] }
+  approvals:
+    enabled: true
+  approval_rules:
+    - name: default
+      when: "true"
+      steps: [{ role: approver }]
+  policies:
+    - { name: deny-ddl, when: 'stmt.kind == "ddl"', action: deny }
+    - { name: reads, when: 'stmt.kind == "select" && !stmt.is_write', action: allow }
+    - { name: writes, when: stmt.is_write, action: approve, require: { reason: true } }
+
+secret:
+  create: true
+  stringData:
+    DBGW_APP_READER_PASSWORD: reader-password
+    DBGW_APP_WRITER_PASSWORD: writer-password
+
+# The database's CA certificate, from an existing ConfigMap.
+extraVolumes:
+  - name: db-ca
+    configMap:
+      name: postgres-ca
+extraVolumeMounts:
+  - name: db-ca
+    mountPath: /etc/dbgateway-ca
+    readOnly: true
