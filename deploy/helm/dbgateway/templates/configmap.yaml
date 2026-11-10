@@ -1,0 +1,13 @@
+{{- if include "dbgateway.ownsConfig" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dbgateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dbgateway.labels" . | nindent 4 }}
+data:
+  # No secrets here: keys ending in _env name environment variables.
+  dbgateway.yaml: |
+    {{- include "dbgateway.config" . | nindent 4 }}
+{{- end }}

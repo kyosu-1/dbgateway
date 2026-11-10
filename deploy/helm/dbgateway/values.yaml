@@ -1,0 +1,277 @@
+# Default values for the dbgateway chart.
+# Reference for the dbgateway configuration: https://kyosu-1.github.io/dbgateway/configuration
+
+image:
+  repository: ghcr.io/kyosu-1/dbgateway
+  # Defaults to the chart's appVersion.
+  tag: ""
+  # Pin an image digest (sha256:...). Takes precedence over the tag when set.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# -- dbgateway configuration (dbgateway.yaml), rendered into a ConfigMap and
+# mounted at /etc/dbgateway/dbgateway.yaml. Changing it rolls the pods.
+#
+# Never write secrets here: keys ending in `_env` name environment variables,
+# which you provide with `envFrom` / `env` from your own Secrets.
+#
+# Values files are merged into these defaults key by key (lists are replaced).
+# To drop a default key, set it to null (for example `store: { path: null }`).
+#
+# The chart checks what it can before installing: `server.listen` must listen
+# on all interfaces on `ports.http`, `server.public_url` must be https (it is
+# derived from the first Ingress host when unset), and several replicas need
+# the PostgreSQL store. Run `dbgw config validate` on your file for the rest.
+config:
+  server:
+    # Plain HTTP inside the cluster; TLS is terminated by the Ingress or load
+    # balancer in front. The port must equal `ports.http`.
+    listen: 0.0.0.0:8443
+    # External https URL. Required unless `ingress.enabled`, in which case it
+    # defaults to https://<first ingress host>.
+    # public_url: https://dbgateway.example.com
+    mode: enforce
+  # Single instance: SQLite on the persistent volume (`persistence`).
+  # For several replicas use `store.driver: postgres` with `dsn_env`.
+  store:
+    driver: sqlite
+    path: /var/lib/dbgateway/dbgateway.db
+  # `file` keeps the hash-chained audit log on the persistent volume.
+  # For several replicas use `audit.output: postgres`.
+  audit:
+    output: file
+    dir: /var/lib/dbgateway/audit
+  # Required: configure `auth.oidc` or `auth.passkeys`, then `databases`,
+  # `groups`, `role_bindings`, `policies` and so on. See
+  # deploy/helm/dbgateway/ci/*.yaml and examples/dbgateway.yaml.
+
+# -- Use an existing ConfigMap instead of `config`. The chart then cannot
+# check the configuration, and changes to it do not roll the pods by
+# themselves (add an annotation in `podAnnotations`, or use a reloader).
+existingConfigMap: ""
+# -- Key of the configuration in `existingConfigMap`.
+existingConfigMapKey: dbgateway.yaml
+
+# -- Environment variables for the container: typically the secrets named by
+# the `*_env` keys of the configuration, from existing Secrets.
+# - name: DBGW_OIDC_CLIENT_SECRET
+#   valueFrom:
+#     secretKeyRef: { name: dbgateway-oidc, key: client-secret }
+env: []
+
+# -- Environment variables from whole Secrets or ConfigMaps.
+# - secretRef:
+#     name: dbgateway-secrets
+envFrom: []
+
+# -- QUICKSTARTS ONLY. Creates a Secret from these values and loads it with
+# envFrom. The values are stored in the Helm release (readable by anyone who
+# can read Secrets in the namespace) and usually end up in a values file.
+# In production, create Secrets yourself (or with External Secrets, Sealed
+# Secrets, a CSI driver...) and reference them with `envFrom` / `env`.
+secret:
+  create: false
+  # Environment variable name -> value.
+  stringData: {}
+
+# Container ports. They must match `server.listen` and `server.metrics_listen`.
+ports:
+  http: 8443
+  metrics: 9090
+
+# Number of pods. More than one requires `store.driver: postgres`,
+# `audit.output: postgres` (or `stdout`) and `persistence.enabled: false`
+# (see https://kyosu-1.github.io/dbgateway/ha).
+# With the SQLite store the chart always runs exactly one pod.
+replicaCount: 1
+
+# Deployment strategy when several replicas are possible (not SQLite and no
+# persistent volume). With SQLite or a ReadWriteOnce volume the strategy is
+# always Recreate, so two pods never use the store at the same time.
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+revisionHistoryLimit: 10
+
+# Persistent volume mounted at /var/lib/dbgateway: the SQLite store and the
+# audit log files (`audit.output: file`). Single instance only. When disabled,
+# an emptyDir is used: its data is lost when the pod is replaced.
+persistence:
+  enabled: true
+  existingClaim: ""
+  # "" uses the cluster's default StorageClass; "-" sets storageClassName: "".
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 2Gi
+  annotations: {}
+  labels: {}
+
+serviceAccount:
+  create: true
+  # Defaults to the full name of the release.
+  name: ""
+  # For IAM database authentication: eks.amazonaws.com/role-arn (IRSA) or
+  # iam.gke.io/gcp-service-account (GKE Workload Identity).
+  annotations: {}
+  labels: {}
+
+# -- Mount a Kubernetes API token in the pod. dbgateway does not use the
+# Kubernetes API.
+automountServiceAccountToken: false
+
+deploymentAnnotations: {}
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  timeoutSeconds: 3
+  # Up to 2 minutes for store migrations at startup.
+  failureThreshold: 60
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# dbgateway waits up to 15 seconds for in-flight requests on SIGTERM.
+terminationGracePeriodSeconds: 30
+# Container lifecycle hooks, e.g. `preStop: { sleep: { seconds: 5 } }`
+# (Kubernetes 1.30+) to let load balancers deregister the pod first.
+lifecycle: {}
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+service:
+  type: ClusterIP
+  port: 8443
+  annotations: {}
+  labels: {}
+
+# Expose dbgateway over HTTPS. dbgateway itself serves plain HTTP, so TLS must
+# be terminated here or by a load balancer in front, and `server.public_url`
+# must be the URL people and agents use.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt
+    # MCP (Streamable HTTP) keeps responses open; raise proxy read timeouts, e.g.
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  hosts:
+    - host: dbgateway.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: dbgateway-tls
+  #    hosts:
+  #      - dbgateway.example.com
+
+# Prometheus metrics. When enabled, the chart sets `server.metrics_listen` to
+# 0.0.0.0:<ports.metrics> (unless the configuration already sets it) and adds a
+# separate ClusterIP Service `<fullname>-metrics`, never exposed by the Ingress.
+# /metrics has no authentication: restrict it with `networkPolicy`.
+metrics:
+  enabled: false
+  service:
+    annotations: {}
+    labels: {}
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs (monitoring.coreos.com/v1).
+    enabled: false
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings: []
+    metricRelabelings: []
+
+# Pods disruptions for several replicas. Ignored for a single replica (a
+# budget there would only block node drains).
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+  # minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Peers allowed to reach the HTTP port (NetworkPolicyPeer list), e.g. the
+  # ingress controller's namespace. Empty: allowed from anywhere.
+  ingressFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: ingress-nginx
+  # Peers allowed to scrape the metrics port. Empty: nobody (the metrics port
+  # is closed).
+  metricsFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  # Egress rules (NetworkPolicyEgressRule list). Empty: egress is not
+  # restricted. When set, include DNS, the databases, the management
+  # database, the IdP and notification endpoints.
+  egress: []
+
+# Additional volumes and mounts, e.g. CA certificates for `sslrootcert`.
+extraVolumes: []
+extraVolumeMounts: []
+
+# Additional containers in the pod (for example a log shipper).
+sidecars: []
+initContainers: []
+
+# Inject Service environment variables (FOO_SERVICE_HOST...) into the pod.
+enableServiceLinks: false

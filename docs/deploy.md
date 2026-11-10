@@ -32,6 +32,16 @@ Both setups have complete Terraform examples, including the database, IAM authen
 
 Smaller examples that only create a database for trying IAM authentication: [deploy/aws](../deploy/aws/), [deploy/gcp](../deploy/gcp/).
 
+## Kubernetes
+
+The Helm chart in [deploy/helm/dbgateway](../deploy/helm/dbgateway/) covers both topologies: a single pod with SQLite and audit files on a persistent volume, or several pods with the PostgreSQL store and audit log, a rolling update and a PodDisruptionBudget. The configuration goes in the chart values (rendered into a ConfigMap) and secrets come from your own Secrets through `envFrom` / `env`.
+
+```sh
+helm install dbgateway deploy/helm/dbgateway --namespace dbgateway --create-namespace -f my-values.yaml
+```
+
+See [Kubernetes](./kubernetes) for a walkthrough, and the [chart's README](../deploy/helm/dbgateway/README.md) for every value.
+
 ## Checklist
 
 - [ ] HTTPS in front of dbgateway, and `server.public_url` set to the external URL

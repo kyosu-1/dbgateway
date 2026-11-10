@@ -47,6 +47,33 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  helm:
+    # Lints and renders the Helm chart with each value set in
+    # deploy/helm/dbgateway/ci/, validates the manifests with kubeconform and
+    # the rendered configuration with `dbgw config validate`.
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883 # linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.1
+      - name: Install kubeconform
+        run: |
+          curl -fsSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+      - name: Build dbgw
+        run: go build -o bin/dbgw ./cmd/dbgw
+      - name: Lint, render and validate the chart
+        run: deploy/helm/check.sh
+
   docs:
     runs-on: ubuntu-latest
     defaults:

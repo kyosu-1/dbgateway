@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "dbgateway chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "objectList": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "probe": {
+      "type": ["object", "null"]
+    }
+  },
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "$ref": "#/definitions/objectList" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "config": {
+      "description": "The dbgateway configuration (dbgateway.yaml). See https://kyosu-1.github.io/dbgateway/configuration",
+      "type": "object",
+      "properties": {
+        "server": {
+          "type": "object",
+          "properties": {
+            "listen": { "type": "string" },
+            "public_url": { "type": ["string", "null"] },
+            "metrics_listen": { "type": ["string", "null"] },
+            "mode": { "type": "string", "enum": ["enforce", "shadow"] }
+          }
+        },
+        "store": {
+          "type": "object",
+          "properties": {
+            "driver": { "type": "string", "enum": ["sqlite", "postgres"] }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "properties": {
+            "output": { "type": "string", "enum": ["file", "stdout", "postgres"] }
+          }
+        }
+      }
+    },
+    "existingConfigMap": { "type": "string" },
+    "existingConfigMapKey": { "type": "string", "minLength": 1 },
+    "env": { "$ref": "#/definitions/objectList" },
+    "envFrom": { "$ref": "#/definitions/objectList" },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "stringData": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      }
+    },
+    "ports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": { "$ref": "#/definitions/port" },
+        "metrics": { "$ref": "#/definitions/port" }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "updateStrategy": { "type": "object" },
+    "revisionHistoryLimit": { "type": "integer", "minimum": 0 },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "existingClaim": { "type": "string" },
+        "storageClass": { "type": "string" },
+        "accessModes": { "type": "array", "items": { "type": "string" } },
+        "size": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "labels": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "labels": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "automountServiceAccountToken": { "type": "boolean" },
+    "deploymentAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podLabels": { "$ref": "#/definitions/stringMap" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "resources": { "type": "object" },
+    "startupProbe": { "$ref": "#/definitions/probe" },
+    "livenessProbe": { "$ref": "#/definitions/probe" },
+    "readinessProbe": { "$ref": "#/definitions/probe" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "lifecycle": { "type": "object" },
+    "priorityClassName": { "type": "string" },
+    "nodeSelector": { "$ref": "#/definitions/stringMap" },
+    "tolerations": { "$ref": "#/definitions/objectList" },
+    "affinity": { "type": "object" },
+    "topologySpreadConstraints": { "$ref": "#/definitions/objectList" },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "$ref": "#/definitions/port" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "labels": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "pathType": { "type": "string", "enum": ["Prefix", "Exact", "ImplementationSpecific"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "secretName": { "type": "string" },
+              "hosts": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "annotations": { "$ref": "#/definitions/stringMap" },
+            "labels": { "$ref": "#/definitions/stringMap" }
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "$ref": "#/definitions/stringMap" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" },
+            "relabelings": { "$ref": "#/definitions/objectList" },
+            "metricRelabelings": { "$ref": "#/definitions/objectList" }
+          }
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxUnavailable": { "type": ["integer", "string", "null"] },
+        "minAvailable": { "type": ["integer", "string", "null"] }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressFrom": { "$ref": "#/definitions/objectList" },
+        "metricsFrom": { "$ref": "#/definitions/objectList" },
+        "egress": { "$ref": "#/definitions/objectList" }
+      }
+    },
+    "extraVolumes": { "$ref": "#/definitions/objectList" },
+    "extraVolumeMounts": { "$ref": "#/definitions/objectList" },
+    "sidecars": { "$ref": "#/definitions/objectList" },
+    "initContainers": { "$ref": "#/definitions/objectList" },
+    "enableServiceLinks": { "type": "boolean" }
+  }
+}
