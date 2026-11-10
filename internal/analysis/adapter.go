@@ -49,10 +49,21 @@ type ExecOptions struct {
 	// MaxAffectedRows bounds the rows a write may affect (required, > 0,
 	// for writes).
 	MaxAffectedRows int64
+	// Session holds transaction-local settings describing who the request
+	// is for (e.g. "dbgateway.user"), set before the statement runs so that
+	// row-level security and triggers can use them. Adapters that cannot
+	// set them ignore it (configuration validation prevents that).
+	Session []Setting
 	// Backup, for writes, saves the rows the statement changes before it
 	// runs (see BackupSpec). Execute then fails with a *BackupError unless
 	// the backup holds exactly the affected rows.
 	Backup *BackupSpec
+}
+
+// Setting is a name and value of a session setting.
+type Setting struct {
+	Name  string
+	Value string
 }
 
 // AffectedRowsError is returned by Execute when a write affected more rows

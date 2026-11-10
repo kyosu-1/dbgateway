@@ -23,6 +23,28 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Approvers who do not read.** The approval page shows the full statement, estimate, affected-row limit and touched columns, but cannot force careful review.
 - **Malicious dbgateway administrators.** Whoever controls the configuration, the host or the management database can change behavior. The audit hash chain and external forwarding make tampering detectable, not impossible.
 
+## Row-level security
+
+dbgateway connects with shared database users, so by default the database cannot tell who a request is for. With `session_identity: true` on a PostgreSQL database, every transaction — reads, and approved or break-glass writes, which run for their requester — starts with these transaction-local settings:
+
+| Setting | Value |
+| --- | --- |
+| `dbgateway.user` | E-mail of the person (for an agent, the person it acts for), lower case |
+| `dbgateway.kind` | `human` or `agent` |
+| `dbgateway.agent` | Agent name; empty for people |
+| `dbgateway.groups` | Comma-separated groups |
+| `dbgateway.request_id` | Request ID, as in the audit log and approvals |
+
+Row-level security policies and triggers can use them:
+
+```sql
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY own_tickets ON tickets
+  USING (assignee = current_setting('dbgateway.user', true));
+```
+
+Callers cannot change the settings: `SET`, `set_config` and transaction control are refused, and they are reset after every transaction. Read `current_setting(name, true)` (missing settings return `NULL`, so a policy matches nothing when the setting is absent). The planner estimate (`EXPLAIN`) runs without the settings. Requires a read and a write user that are subject to row-level security (not superusers, not `BYPASSRLS`, not the table owner unless the policy is `FORCE`d).
+
 ## Trust boundaries
 
 | Boundary | Controls |

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `databases[].session_identity` (PostgreSQL): every transaction carries the requester as `dbgateway.user`, `dbgateway.kind`, `dbgateway.agent`, `dbgateway.groups` and `dbgateway.request_id` settings, so row-level security policies and triggers can tell who a request is for.
+
 ## [0.2.0] - 2026-11-11
 
 ### Added

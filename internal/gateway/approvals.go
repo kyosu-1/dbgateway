@@ -141,7 +141,8 @@ func (g *Gateway) runWrite(ctx context.Context, p *identity.Principal, d *databa
 	}
 	limits := d.cfg.Limits
 	opts := analysis.ExecOptions{ReadOnly: false, MaxRows: limits.MaxRows, MaxBytes: int64(limits.MaxBytes),
-		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D(), MaxAffectedRows: maxAffected}
+		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D(), MaxAffectedRows: maxAffected,
+		Session: sessionIdentity(d.cfg, p, id)}
 	if m := ev.Decision.Require.MaxRows; m > 0 && (opts.MaxRows <= 0 || m < opts.MaxRows) {
 		opts.MaxRows = m
 	}

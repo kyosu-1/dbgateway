@@ -557,7 +557,8 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 
 	limits := d.cfg.Limits
 	opts := analysis.ExecOptions{ReadOnly: true, MaxRows: limits.MaxRows, MaxBytes: int64(limits.MaxBytes),
-		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()}
+		StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D(),
+		Session: sessionIdentity(d.cfg, p, resp.RequestID)}
 	if req.Export != "" {
 		opts.MaxRows, opts.MaxBytes = req.ExportMaxRows, max(opts.MaxBytes, exportMaxBytes)
 	}

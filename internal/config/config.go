@@ -195,6 +195,10 @@ type Database struct {
 	// Backup saves the rows that approved UPDATE and DELETE statements
 	// change, so the change can be undone (PostgreSQL only).
 	Backup *Backup `yaml:"backup"`
+	// SessionIdentity sets dbgateway.* transaction settings describing the
+	// requester before every statement (PostgreSQL only), for row-level
+	// security policies and triggers.
+	SessionIdentity bool `yaml:"session_identity"`
 }
 
 type Endpoint struct {
@@ -544,6 +548,9 @@ func (c *Config) validate() error {
 		db.Docs.validate(p+".docs", add)
 		if db.Backup != nil {
 			db.Backup.validate(&db, p+".backup", add)
+		}
+		if db.SessionIdentity && db.Type != "postgres" {
+			add("%s.session_identity: only supported for postgres databases", p)
 		}
 	}
 

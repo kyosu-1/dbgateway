@@ -189,6 +189,17 @@ func (c *conn) withTx(ctx context.Context, pool *pgxpool.Pool, mode pgx.TxAccess
 	); err != nil {
 		return fmt.Errorf("configure session: %w", err)
 	}
+	if len(opt.Session) > 0 {
+		parts := make([]string, 0, len(opt.Session))
+		args := make([]any, 0, 2*len(opt.Session))
+		for i, st := range opt.Session {
+			parts = append(parts, fmt.Sprintf("set_config($%d, $%d, true)", 2*i+1, 2*i+2))
+			args = append(args, st.Name, st.Value)
+		}
+		if _, err := tx.Exec(ctx, "SELECT "+strings.Join(parts, ", "), args...); err != nil {
+			return fmt.Errorf("configure session identity: %w", err)
+		}
+	}
 	return fn(tx)
 }
 
