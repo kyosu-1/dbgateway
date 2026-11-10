@@ -41,21 +41,26 @@ prod-main  postgres  querier,writer,viewer  yes     yes   approval  1000      en
 analytics  postgres  viewer                 yes     no    no        -         env=prod
 ```
 
-On databases where `WRITE` is `approval`, you can submit writes; they run after approval.
+On databases where `WRITE` is `approval`, you can submit writes; they run after approval. When a database has a [description](./configuration#docs), a `DESCRIPTION` column shows its beginning; `-o json` has the full text.
 
 ## dbgw search
 
 ```console
 $ dbgw search --db prod-main users
-public.users (table)
+public.users (table) -- One row per account.
   id      int8         not null  public
   email*  text         not null  masked
-  plan    text         null      public
+  plan    text         null      public  -- free, pro or enterprise.
 
 * masked for you
+
+Examples:
+  Accounts per plan -- Counts every account.
+    SELECT plan, count(*) FROM users GROUP BY plan
 ```
 
 - A `*` after a column name marks a column that is masked for you.
+- `-- ...` is the description from the configuration ([docs](./configuration#docs)); a database comment that says something else follows as `(db comment: ...)`. `Examples` lists the configured example queries that use the tables shown.
 - `--detail names|summary|full`: `names` shows names only, `summary` (default) adds columns, `full` adds indexes, comments and row estimates (read directly from the database catalog).
 - `--schema <schema>`: limits the search to one schema. System schemas are shown only when named.
 - `--limit <count>`: default 50, max 200. A note is printed to standard error when the limit is reached.

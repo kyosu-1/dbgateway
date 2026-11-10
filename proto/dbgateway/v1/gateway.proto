@@ -82,6 +82,9 @@ message Database {
   bool can_write = 7;
   // Maximum rows returned by one query. Zero means no limit.
   int64 max_rows = 8;
+  // Curated description of the database from the configuration
+  // (databases[].docs.description). Only set when can_search is true.
+  string description = 9;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +122,9 @@ message SearchObjectsResponse {
   repeated SchemaObject objects = 3;
   // More objects matched than were returned.
   bool truncated = 4;
+  // Configured example queries that reference one of the returned
+  // objects. Empty for OBJECT_DETAIL_NAMES.
+  repeated ExampleQuery examples = 5;
 }
 
 // SchemaObject is a table, view, materialized view or foreign table.
@@ -127,22 +133,40 @@ message SchemaObject {
   string type = 1;
   string schema = 2;
   string name = 3;
+  // The database's own comment (detail FULL).
   string comment = 4;
   repeated ObjectColumn columns = 5;
   repeated ObjectIndex indexes = 6;
   // Planner row estimate, when known (detail FULL).
   optional int64 row_estimate = 7;
+  // Curated description from the configuration (databases[].docs.tables).
+  // Not set for OBJECT_DETAIL_NAMES.
+  string description = 8;
 }
 
 message ObjectColumn {
   string name = 1;
   string type = 2;
   bool nullable = 3;
+  // The database's own comment (detail FULL).
   string comment = 4;
   // Data class from the configuration (e.g. public, masked, no_ai).
   string class = 5;
   // Values of this column are masked for the caller.
   bool masked = 6;
+  // Curated description from the configuration. Metadata only: it does
+  // not change masking.
+  string description = 7;
+}
+
+// ExampleQuery is an example query from the configuration
+// (databases[].docs.examples), known to answer a common question.
+message ExampleQuery {
+  string title = 1;
+  string description = 2;
+  string sql = 3;
+  // Relations the query references (schema.name).
+  repeated string tables = 4;
 }
 
 message ObjectIndex {

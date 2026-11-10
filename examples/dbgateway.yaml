@@ -61,6 +61,25 @@ databases:
       max_bytes: 1MiB
       statement_timeout: 10s
       lock_timeout: 2s
+    docs:                       # shown to agents and people who may search the schema; never put data values here
+      description: Core OLTP database of the shop. Amounts are in JPY, tax included.
+      tables:                   # schema.table
+        public.orders:
+          description: One row per checkout. status is pending, paid or refunded; only paid orders count as revenue.
+          columns:
+            amount: Total in JPY, tax included.
+            created_at: Checkout time (UTC).
+        public.subscriptions:
+          description: Current plan of each user; churned_at is set when status becomes churned.
+      examples:                 # tables they reference are found with the SQL analyzer; shown with those tables
+        - title: Daily revenue
+          description: Paid orders only, by UTC day.
+          sql: |
+            SELECT date_trunc('day', created_at) AS day, sum(amount) AS revenue
+            FROM orders
+            WHERE status = 'paid'
+            GROUP BY 1
+            ORDER BY 1
   - name: staging
     type: postgres
     labels: { env: staging }

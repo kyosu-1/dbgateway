@@ -150,6 +150,7 @@ A list. MySQL specifics are in [mysql.md](mysql.md), IAM authentication in [oper
 | `limits.lock_timeout` | duration | `2s` | |
 | `search_path` | list | `[public]` | Schemas for unqualified names. MySQL: the default database only |
 | `default_class` | `{human, agent}` | | Class of unclassified columns on this database |
+| `docs` | map | | Descriptions and example queries for agents and people writing SQL; see [docs](#docs) |
 
 Endpoint keys:
 
@@ -167,6 +168,42 @@ Endpoint keys:
 | `sslmode` | string | `verify-full` | PostgreSQL modes; for MySQL `disable`, `require` or `verify-full` |
 | `sslrootcert` | path | | CA file |
 | `sslrootcert_env` | env name | | CA as PEM in an environment variable (exclusive with `sslrootcert`) |
+
+#### docs
+
+Knowledge about the schema that names alone do not tell: what the database is for, what tables and columns mean, units and allowed values, and example queries known to be right. Agents get it from `list_databases` and `search_objects` ([MCP](mcp.md#schema-docs)), people from `dbgw dbs`, `dbgw search` and the SQL editor's schema list. It lives in the configuration so that it is reviewed and versioned like everything else.
+
+```yaml
+databases:
+  - name: prod-main
+    docs:
+      description: Core OLTP database of the shop. Amounts are in JPY, tax included.
+      tables:
+        public.orders:
+          description: One row per checkout. status is pending, paid or refunded.
+          columns:
+            amount: Total in JPY, tax included.
+      examples:
+        - title: Daily revenue
+          description: Paid orders only, by UTC day.
+          sql: |
+            SELECT date_trunc('day', created_at) AS day, sum(amount) AS revenue
+            FROM orders WHERE status = 'paid' GROUP BY 1 ORDER BY 1
+```
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `description` | string | About the database. Returned by `list_databases` |
+| `tables` | map | Key: `schema.table` (MySQL: `database.table`), also for views. Matched case-insensitively |
+| `tables.*.description` | string | About the table |
+| `tables.*.columns` | map | Column name to its description |
+| `examples` | list | Example queries: `title` (required, unique per database), `sql` (required), `description` |
+
+- **Database comments are kept.** `search_objects` returns the configured text as `description` and the database's own `COMMENT` as `comment` (detail `full`, as before). Nothing is merged or overwritten, so you can see where each came from; agents are told to prefer `description` when the two disagree.
+- **Examples are attached to tables.** dbgateway analyzes each example with the same SQL analyzer as `execute_sql`, against the live catalog, and returns it from `search_objects` whenever one of the tables it references (after resolving `search_path`, aliases, CTEs and views) is in the result. An example that cannot be analyzed — a typo, a table that no longer exists, a statement dbgateway refuses — is never shown, and a warning is logged once. Examples are shown, not run: they go through the usual checks when an agent executes them.
+- **Same visibility as the schema.** Docs are returned only to callers with search access (`viewer`, implied by `querier`) on the database, exactly like table and column names. A database the caller cannot search, or that does not exist, looks the same.
+- **Metadata only.** Descriptions do not change classification or masking: a masked column with a description is still masked. Docs are shown verbatim to everyone who can search the database, so never put data values (customer names, e-mail addresses, secrets) in them.
+- Keys are validated like the rest of the file: unknown keys, unqualified table names, empty entries and duplicate example titles are errors. `dbgw config validate` does not connect to the database, so whether examples reference existing tables is checked at run time (the warning above).
 
 ### groups
 

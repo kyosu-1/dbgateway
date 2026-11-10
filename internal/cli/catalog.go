@@ -41,15 +41,26 @@ func DatabasesCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s has no access to any database.\n", resp.Msg.Principal)
 				return nil
 			}
+			// The description column is shown only when a database has one
+			// (the full text is in -o json).
+			withDesc := slices.ContainsFunc(resp.Msg.Databases, func(d *dbgatewayv1.Database) bool { return d.Description != "" })
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tTYPE\tROLES\tSEARCH\tREAD\tWRITE\tMAX_ROWS\tLABELS")
+			header := "NAME\tTYPE\tROLES\tSEARCH\tREAD\tWRITE\tMAX_ROWS\tLABELS"
+			if withDesc {
+				header += "\tDESCRIPTION"
+			}
+			fmt.Fprintln(w, header)
 			for _, d := range resp.Msg.Databases {
 				maxRows := "-"
 				if d.MaxRows > 0 {
 					maxRows = fmt.Sprint(d.MaxRows)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sanitize(d.Name), sanitize(d.Type), dash(strings.Join(d.Roles, ",")),
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", sanitize(d.Name), sanitize(d.Type), dash(strings.Join(d.Roles, ",")),
 					yesNo(d.CanSearch), yesNo(d.CanRead), writeText(d.CanWrite), maxRows, dash(sanitize(labels(d.Labels))))
+				if withDesc {
+					fmt.Fprintf(w, "\t%s", dash(sanitize(truncateText(d.Description, descriptionWidth))))
+				}
+				fmt.Fprintln(w)
 			}
 			return w.Flush()
 		},
@@ -58,6 +69,9 @@ func DatabasesCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&format, "format", "o", formatTable, "output format: table or json")
 	return cmd
 }
+
+// descriptionWidth bounds descriptions in the `dbgw dbs` table.
+const descriptionWidth = 60
 
 func yesNo(b bool) string {
 	if b {
@@ -89,7 +103,9 @@ func SearchCmd() *cobra.Command {
 		Use:   "search --db NAME [KEYWORD]",
 		Short: "Search tables, views and columns",
 		Long: `Search tables, views and columns whose schema, table or column name contains
-KEYWORD (everything when omitted). Columns masked for you are marked with *.`,
+KEYWORD (everything when omitted). Columns masked for you are marked with *.
+Descriptions and example queries from the configuration are shown with the
+objects they document.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkFormat(format, formatTable, formatJSON); err != nil {
@@ -129,6 +145,7 @@ KEYWORD (everything when omitted). Columns masked for you are marked with *.`,
 			if err := printObjects(cmd.OutOrStdout(), resp.Msg.Objects); err != nil {
 				return err
 			}
+			printExamples(cmd.OutOrStdout(), resp.Msg.Examples)
 			if len(resp.Msg.Objects) == 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(), "No matching objects.")
 			}
@@ -158,8 +175,8 @@ func printObjects(out io.Writer, objs []*dbgatewayv1.SchemaObject) error {
 		if o.RowEstimate != nil {
 			line += fmt.Sprintf(" ~%d rows", *o.RowEstimate)
 		}
-		if o.Comment != "" {
-			line += " -- " + sanitize(o.Comment)
+		if n := note(o.Description, o.Comment); n != "" {
+			line += " -- " + n
 		}
 		fmt.Fprintln(out, line)
 		if len(o.Columns) > 0 {
@@ -175,8 +192,8 @@ func printObjects(out io.Writer, objs []*dbgatewayv1.SchemaObject) error {
 					null = "null"
 				}
 				fmt.Fprintf(w, "  %s\t%s\t%s\t%s", name, sanitize(c.Type), null, dash(sanitize(c.Class)))
-				if c.Comment != "" {
-					fmt.Fprintf(w, "\t-- %s", sanitize(c.Comment))
+				if n := note(c.Description, c.Comment); n != "" {
+					fmt.Fprintf(w, "\t-- %s", n)
 				}
 				fmt.Fprintln(w)
 			}
@@ -192,4 +209,35 @@ func printObjects(out io.Writer, objs []*dbgatewayv1.SchemaObject) error {
 		fmt.Fprintf(out, "\n%s masked for you\n", markMasked)
 	}
 	return nil
+}
+
+// note is the text shown after an object or column: the configured
+// description, then the database comment when it says something else.
+func note(description, comment string) string {
+	switch {
+	case description == "":
+		return sanitize(comment)
+	case comment == "" || comment == description:
+		return sanitize(description)
+	}
+	return sanitize(description) + " (db comment: " + sanitize(comment) + ")"
+}
+
+// printExamples prints the configured example queries, SQL indented below
+// the title.
+func printExamples(out io.Writer, exs []*dbgatewayv1.ExampleQuery) {
+	if len(exs) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "\nExamples:")
+	for _, ex := range exs {
+		title := "  " + sanitize(ex.Title)
+		if ex.Description != "" {
+			title += " -- " + sanitize(ex.Description)
+		}
+		fmt.Fprintln(out, title)
+		for _, l := range strings.Split(ex.Sql, "\n") {
+			fmt.Fprintln(out, "    "+sanitize(strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", "  ")))
+		}
+	}
 }

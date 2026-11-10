@@ -43,6 +43,12 @@ databases:
   - name: prod
     labels: { env: prod }
     primary: { host: localhost, read_user: r, write_user: w, sslmode: disable }
+    docs:
+      description: Production database.
+      tables:
+        public.users: { description: One row per account., columns: { email: Login e-mail. } }
+      examples:
+        - { title: Accounts per plan, description: All accounts., sql: "SELECT plan, count(*) FROM users GROUP BY plan" }
 groups:
   - { name: dev, members: [taro@example.com] }
   - { name: sre, members: [hanako@example.com] }
@@ -274,7 +280,8 @@ func TestListDatabasesSearchExplain(t *testing.T) {
 		t.Fatalf("dbs = %v", dbs.Msg)
 	}
 	d := dbs.Msg.Databases[0]
-	if d.Name != "prod" || d.Type != "postgres" || d.Labels["env"] != "prod" || !d.CanRead || !d.CanWrite || !slices.Contains(d.Roles, "writer") {
+	if d.Name != "prod" || d.Type != "postgres" || d.Labels["env"] != "prod" || !d.CanRead || !d.CanWrite || !slices.Contains(d.Roles, "writer") ||
+		d.Description != "Production database." {
 		t.Fatalf("db = %v", d)
 	}
 
@@ -289,6 +296,16 @@ func TestListDatabasesSearchExplain(t *testing.T) {
 		if (c.Name == "email") != c.Masked {
 			t.Errorf("column %s masked = %v", c.Name, c.Masked)
 		}
+		if want := map[string]string{"email": "Login e-mail."}[c.Name]; c.Description != want {
+			t.Errorf("column %s description = %q", c.Name, c.Description)
+		}
+	}
+	if sr.Msg.Objects[0].Description != "One row per account." || len(sr.Msg.Examples) != 1 {
+		t.Fatalf("docs = %v", sr.Msg)
+	}
+	if x := sr.Msg.Examples[0]; x.Title != "Accounts per plan" || x.Description != "All accounts." || !strings.HasPrefix(x.Sql, "SELECT plan") ||
+		!slices.Equal(x.Tables, []string{"public.users"}) {
+		t.Fatalf("example = %v", x)
 	}
 	if _, err := e.client.SearchObjects(ctx, withBearer(&dbgatewayv1.SearchObjectsRequest{Database: "nope"}, taro)); code(err) != connect.CodePermissionDenied {
 		t.Fatalf("unknown db search: %v", err)

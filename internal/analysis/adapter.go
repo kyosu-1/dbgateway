@@ -98,12 +98,16 @@ type ObjectFilter struct {
 
 // Object is a schema object returned by Introspect.
 type Object struct {
-	Type    string         `json:"type"` // table | view | materialized_view | foreign_table
-	Schema  string         `json:"schema"`
-	Name    string         `json:"name"`
-	Comment string         `json:"comment,omitempty"`
-	Columns []ObjectColumn `json:"columns,omitempty"`
-	Indexes []ObjectIndex  `json:"indexes,omitempty"`
+	Type   string `json:"type"` // table | view | materialized_view | foreign_table
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
+	// Comment is the database's own COMMENT (detail "full").
+	Comment string `json:"comment,omitempty"`
+	// Description is the curated description from the configuration
+	// (databases[].docs), filled by the caller. Both are kept.
+	Description string         `json:"description,omitempty"`
+	Columns     []ObjectColumn `json:"columns,omitempty"`
+	Indexes     []ObjectIndex  `json:"indexes,omitempty"`
 	// RowEstimate is the planner statistic (reltuples), when known.
 	RowEstimate *int64 `json:"row_estimate,omitempty"`
 }
@@ -114,6 +118,9 @@ type ObjectColumn struct {
 	Type     string `json:"type"`
 	Nullable bool   `json:"nullable"`
 	Comment  string `json:"comment,omitempty"`
+	// Description is the curated description from the configuration,
+	// filled by the caller.
+	Description string `json:"description,omitempty"`
 	// Class is filled by the caller from the data classification.
 	Class  string `json:"class,omitempty"`
 	Masked bool   `json:"masked,omitempty"`

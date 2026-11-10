@@ -70,11 +70,17 @@ type database struct {
 	cfg      *config.Database
 	adapter  analysis.Adapter
 	observer Observer // may be nil
+	docs     tableDocs
 
 	mu    sync.Mutex
 	conn  analysis.Conn
 	cat   *analysis.Catalog
 	catAt time.Time
+	// examples holds the tables each configured example query references,
+	// computed against exCat (see docs.go).
+	examples []exampleTables
+	exCat    *analysis.Catalog
+	exWarned map[string]bool
 }
 
 // New builds a gateway. Database connections are opened lazily.
@@ -99,7 +105,7 @@ func New(opts Options) (*Gateway, error) {
 		if !ok {
 			return nil, fmt.Errorf("no adapter for database type %q", db.Type)
 		}
-		g.dbs[db.Name] = &database{cfg: db, adapter: ad, observer: opts.Observer}
+		g.dbs[db.Name] = &database{cfg: db, adapter: ad, observer: opts.Observer, docs: indexDocs(&db.Docs)}
 	}
 	return g, nil
 }
@@ -178,6 +184,9 @@ type DatabaseInfo struct {
 	CanRead   bool              `json:"can_read"`
 	CanWrite  bool              `json:"can_write"`
 	MaxRows   int               `json:"max_rows"`
+	// Description is the curated description of the database
+	// (databases[].docs.description), shown only with search access.
+	Description string `json:"description,omitempty"`
 }
 
 // ListDatabases returns the databases the caller can use.
@@ -185,7 +194,7 @@ func (g *Gateway) ListDatabases(p *identity.Principal) []DatabaseInfo {
 	var out []DatabaseInfo
 	for _, db := range g.RBAC.Accessible(p) {
 		roles := g.RBAC.Roles(p, db)
-		out = append(out, DatabaseInfo{
+		info := DatabaseInfo{
 			Name: db.Name, Type: db.Type, Labels: db.Labels, Roles: roles,
 			CanSearch: slices.Contains(roles, identity.RoleViewer),
 			CanRead:   slices.Contains(roles, identity.RoleQuerier),
@@ -193,7 +202,13 @@ func (g *Gateway) ListDatabases(p *identity.Principal) []DatabaseInfo {
 			CanWrite: g.cfg.Approvals.Enabled && db.Primary.WriteUser != "" &&
 				slices.Contains(roles, identity.RoleQuerier) && slices.Contains(roles, identity.RoleWriter),
 			MaxRows: db.Limits.MaxRows,
-		})
+		}
+		// Docs are schema knowledge: shown to exactly those who may see
+		// the schema (search_objects requires viewer).
+		if info.CanSearch {
+			info.Description = strings.TrimSpace(db.Docs.Description)
+		}
+		out = append(out, info)
 	}
 	return out
 }
@@ -223,6 +238,9 @@ type SearchResponse struct {
 	Database  string            `json:"database"`
 	Objects   []analysis.Object `json:"objects"`
 	Truncated bool              `json:"truncated"`
+	// Examples are the configured example queries that reference one of
+	// the returned objects (not for detail "names").
+	Examples []Example `json:"examples,omitempty"`
 }
 
 // ErrNoAccess is returned for unknown databases and missing roles alike,
@@ -285,6 +303,10 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 	}
 	if resp.Objects == nil {
 		resp.Objects = []analysis.Object{}
+	}
+	if req.Detail != "names" {
+		d.docs.apply(resp.Objects)
+		resp.Examples = g.examplesFor(ctx, d, resp.Objects)
 	}
 	if req.Browse {
 		return resp, nil
