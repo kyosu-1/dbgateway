@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
 ### Added
 
 - `backup.retention`: backup tables older than the retention are dropped hourly, with an audit entry (`backup_expired`) for each.
@@ -42,6 +44,7 @@ First public release.
 - IAM database authentication for Amazon RDS and Cloud SQL, read replicas, multi-instance mode with PostgreSQL.
 - Terraform examples for ECS Fargate and Cloud Run.
 
-[Unreleased]: https://github.com/kyosu-1/dbgateway/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kyosu-1/dbgateway/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kyosu-1/dbgateway/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kyosu-1/dbgateway/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyosu-1/dbgateway/releases/tag/v0.1.0
