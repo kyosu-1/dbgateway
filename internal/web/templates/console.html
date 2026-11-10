@@ -66,8 +66,9 @@
 <details{{if and (eq $i 0) $.Form.Search}} open{{end}}>
 <summary><span class="schema-name">{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}</span>{{with .RowEstimate}}<span class="schema-rows">{{t "console.rows" (deref64 .)}}</span>{{end}}</summary>
 <ul>
+{{with .Description}}<li class="schema-desc" dir="auto">{{.}}</li>{{end}}
 <li class="schema-insert"><button type="button" class="col-btn" data-insert="{{if ne .Schema "public"}}{{.Schema}}.{{end}}{{.Name}}">{{t "console.insert_table"}}</button></li>
-{{range .Columns}}<li><button type="button" class="col-btn" data-insert="{{.Name}}" title="{{t "console.insert_column"}}"><span class="col-name">{{.Name}}{{if or .Masked (eq .Class "masked")}}<span class="class-badge">{{t "console.class_masked"}}</span>{{else if eq .Class "no_ai"}}<span class="class-badge class-no-ai">{{t "console.class_no_ai"}}</span>{{end}}</span><span class="col-type" title="{{.Type}}">{{.Type}}</span></button></li>
+{{range .Columns}}<li><button type="button" class="col-btn" data-insert="{{.Name}}" title="{{with .Description}}{{.}}&#10;{{end}}{{t "console.insert_column"}}"><span class="col-name">{{.Name}}{{if or .Masked (eq .Class "masked")}}<span class="class-badge">{{t "console.class_masked"}}</span>{{else if eq .Class "no_ai"}}<span class="class-badge class-no-ai">{{t "console.class_no_ai"}}</span>{{end}}</span><span class="col-type" title="{{.Type}}">{{.Type}}</span></button></li>
 {{end}}
 </ul>
 </details>

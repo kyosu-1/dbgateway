@@ -47,6 +47,14 @@ databases:
       sslmode: %s
       sslrootcert: "%s"
     limits: { max_rows: 50, max_bytes: 64KiB, statement_timeout: 1s }
+    docs:
+      description: Integration test database.
+      tables:
+        public.users:
+          description: One row per account.
+          columns: { email: "Login e-mail, unique." }
+      examples:
+        - { title: Revenue per plan, sql: "SELECT u.plan, sum(o.amount) FROM orders o JOIN users u ON u.id = o.user_id GROUP BY 1" }
 groups:
   - { name: dev, members: [taro@example.com] }
 role_bindings:
@@ -241,9 +249,14 @@ func TestSearchObjects(t *testing.T) {
 	for _, o := range resp.Objects {
 		if o.Name == "users" {
 			found = true
+			// The database comment and the configured description are
+			// both returned.
+			if o.Comment != "Application users" || o.Description != "One row per account." {
+				t.Errorf("users comment/description = %q / %q", o.Comment, o.Description)
+			}
 			for _, c := range o.Columns {
-				if c.Name == "email" && !c.Masked {
-					t.Error("email should be marked masked")
+				if c.Name == "email" && (!c.Masked || c.Comment != "Login e-mail address" || c.Description != "Login e-mail, unique.") {
+					t.Errorf("email should be marked masked, with comment and description: %+v", c)
 				}
 				if c.Name == "id" && c.Masked {
 					t.Error("id should not be masked")
@@ -256,6 +269,9 @@ func TestSearchObjects(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("users not found: %+v", resp.Objects)
+	}
+	if len(resp.Examples) != 1 || strings.Join(resp.Examples[0].Tables, ",") != "public.orders,public.users" {
+		t.Errorf("examples = %+v", resp.Examples)
 	}
 	if _, err := gw.SearchObjects(context.Background(), agent, gateway.SearchRequest{Database: "nope"}); err == nil {
 		t.Error("unknown database must fail")

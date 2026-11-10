@@ -11,7 +11,7 @@ Queries from the editor go through the same gateway as AI agents (parsing, polic
 | Editor | Syntax highlighting, line numbers, bracket matching. `⌘/Ctrl + Enter` runs the query, `⌘/Ctrl + Shift + Enter` checks the decision. You can run just the selected text |
 | Completion | SQL keywords, plus the tables and columns the person is allowed to see. Columns show their type and data class (`masked`, `no_ai`) |
 | Tabs | Write drafts in several tabs. Drafts are stored only in the browser (localStorage) and never sent to the server |
-| Schema | Opening a table shows its columns, types and data classes. Click to insert into the editor. Listing tables is not audited (searching with the search box is) |
+| Schema | Opening a table shows its columns, types and data classes, with descriptions from the configuration ([docs](./configuration#docs); column descriptions appear on hover). Click to insert into the editor. Listing tables is not audited (searching with the search box is) |
 | Check decision | Without running the query, shows allow / approve / deny, the matching rule, the risk, the estimated rows and the columns that will be masked |
 | Results | Masked columns are marked. Sort by clicking a column header. A write becomes a pending approval request, with a link to the approval page |
 | History | The SQL you ran (as typed), the database, the reason and the outcome. Visible only to you; kept 30 days by default, up to 500 entries |

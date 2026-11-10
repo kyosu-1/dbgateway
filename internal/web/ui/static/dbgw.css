@@ -491,6 +491,7 @@ textarea.control { padding: 10px 12px; resize: vertical; width: 100%; min-height
 }
 .console.enhanced .col-btn { cursor: pointer; }
 .console.enhanced .col-btn:hover { background: var(--accent-tint); }
+.schema-desc { padding: 2px 6px 4px; font-family: var(--font); color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
 .schema-insert { display: none; }
 .console.enhanced .schema-insert { display: block; }
 .schema-insert .col-btn { font-family: var(--font); color: var(--accent); font-size: 12px; }

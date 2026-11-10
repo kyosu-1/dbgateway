@@ -8,8 +8,8 @@ The tool set is deliberately small so it costs little context and is hard to mis
 
 | Tool | Input | Output |
 | --- | --- | --- |
-| `list_databases` | none | Who you are acting as, and per database: name, type, labels, your roles, `can_search`, `can_read`, `can_write`, `max_rows` |
-| `search_objects` | `database`, `keyword`, `schema`, `detail` (`names`, `summary` default, `full`), `limit` (default 50, max 200) | Tables and views with columns, types and data class. Columns hidden from you have `masked: true`. `full` adds indexes, comments and row estimates |
+| `list_databases` | none | Who you are acting as, and per database: name, type, labels, your roles, `can_search`, `can_read`, `can_write`, `max_rows`, and the configured `description` |
+| `search_objects` | `database`, `keyword`, `schema`, `detail` (`names`, `summary` default, `full`), `limit` (default 50, max 200) | Tables and views with columns, types and data class, configured descriptions, and example queries that use them. Columns hidden from you have `masked: true`. `full` adds indexes, database comments and row estimates |
 | `execute_sql` | `database`, `sql` (one statement), `reason` (required) | Rows, a pending approval request, or a denial (below) |
 | `explain_policy` | `database`, `sql` | What `execute_sql` would decide, without executing: decision (`allow` / `approve` / `deny`), stage, rule, reason and hint, risk, approval rule, steps and approvers, affected-row limit, referenced columns with class and usage, and how each output column would be returned |
 | `get_request` | `request_id` | The approval request: status, approval progress and, once executed, `rows_affected` and masked `RETURNING` rows |
@@ -17,6 +17,42 @@ The tool set is deliberately small so it costs little context and is hard to mis
 `get_request` is registered only when approvals are enabled. Without approvals, `execute_sql` is annotated read-only; with approvals it is annotated as possibly destructive, since an approved write may follow.
 
 The `reason` is recorded in the audit log and shown to approvers. It must not be empty; policies can additionally reject reasons that are too short or generic ("test", "check", ...).
+
+## Schema docs
+
+Table and column names rarely say everything an agent needs to write a correct query: units, status values, which rows count as revenue, how tables join. The people who own a database write this down in the configuration ([`databases[].docs`](./configuration#docs)) and dbgateway hands it to agents with the schema. The server instructions and tool descriptions tell agents to read it before writing SQL.
+
+`list_databases` returns the database's `description`. `search_objects` (detail `summary` or `full`) returns `description` on tables and columns and an `examples` list:
+
+```json
+{
+  "request_id": "req_...",
+  "database": "prod-main",
+  "objects": [
+    {
+      "type": "table", "schema": "public", "name": "orders",
+      "description": "One row per checkout. status is pending, paid or refunded.",
+      "columns": [
+        { "name": "id", "type": "int8", "nullable": false, "class": "public" },
+        { "name": "amount", "type": "numeric", "nullable": false, "class": "public", "description": "Total in JPY, tax included." }
+      ]
+    }
+  ],
+  "truncated": false,
+  "examples": [
+    {
+      "title": "Daily revenue",
+      "description": "Paid orders only, by UTC day.",
+      "sql": "SELECT date_trunc('day', created_at) AS day, sum(amount) AS revenue FROM orders WHERE status = 'paid' GROUP BY 1 ORDER BY 1",
+      "tables": ["public.orders"]
+    }
+  ]
+}
+```
+
+- `description` is the configured text; `comment` (detail `full`) is the database's own `COMMENT`. Both are returned unchanged.
+- `examples` holds the example queries that reference at least one returned table, as determined by dbgateway's SQL analyzer; `tables` lists what each references. Detail `names` returns neither descriptions nor examples, to stay small.
+- Docs follow the schema's access rules: you get them only for databases you can search, and they never change masking.
 
 ## Results
 

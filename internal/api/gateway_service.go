@@ -58,7 +58,7 @@ func (s *gatewayService) ListDatabases(ctx context.Context, _ *connect.Request[d
 	resp := &dbgatewayv1.ListDatabasesResponse{Principal: caller.Human}
 	for _, d := range s.gw.ListDatabases(caller) {
 		db := &dbgatewayv1.Database{Name: d.Name, Type: d.Type, Labels: d.Labels,
-			CanSearch: d.CanSearch, CanRead: d.CanRead, CanWrite: d.CanWrite, MaxRows: int64(d.MaxRows)}
+			CanSearch: d.CanSearch, CanRead: d.CanRead, CanWrite: d.CanWrite, MaxRows: int64(d.MaxRows), Description: d.Description}
 		for _, r := range d.Roles {
 			db.Roles = append(db.Roles, string(r))
 		}
@@ -97,15 +97,19 @@ func (s *gatewayService) SearchObjects(ctx context.Context, req *connect.Request
 	}
 	resp := &dbgatewayv1.SearchObjectsResponse{RequestId: res.RequestID, Database: res.Database, Truncated: res.Truncated}
 	for _, o := range res.Objects {
-		po := &dbgatewayv1.SchemaObject{Type: o.Type, Schema: o.Schema, Name: o.Name, Comment: o.Comment, RowEstimate: o.RowEstimate}
+		po := &dbgatewayv1.SchemaObject{Type: o.Type, Schema: o.Schema, Name: o.Name, Comment: o.Comment, RowEstimate: o.RowEstimate,
+			Description: o.Description}
 		for _, c := range o.Columns {
 			po.Columns = append(po.Columns, &dbgatewayv1.ObjectColumn{Name: c.Name, Type: c.Type, Nullable: c.Nullable,
-				Comment: c.Comment, Class: c.Class, Masked: c.Masked})
+				Comment: c.Comment, Class: c.Class, Masked: c.Masked, Description: c.Description})
 		}
 		for _, ix := range o.Indexes {
 			po.Indexes = append(po.Indexes, &dbgatewayv1.ObjectIndex{Name: ix.Name, Definition: ix.Definition})
 		}
 		resp.Objects = append(resp.Objects, po)
+	}
+	for _, ex := range res.Examples {
+		resp.Examples = append(resp.Examples, &dbgatewayv1.ExampleQuery{Title: ex.Title, Description: ex.Description, Sql: ex.SQL, Tables: ex.Tables})
 	}
 	return connect.NewResponse(resp), nil
 }

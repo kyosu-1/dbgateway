@@ -190,6 +190,8 @@ type Database struct {
 	Limits       Limits            `yaml:"limits"`
 	SearchPath   []string          `yaml:"search_path"`
 	DefaultClass *DefaultClass     `yaml:"default_class"`
+	// Docs is curated knowledge about the schema (see docs.go).
+	Docs DatabaseDocs `yaml:"docs"`
 }
 
 type Endpoint struct {
@@ -536,6 +538,7 @@ func (c *Config) validate() error {
 		if db.DefaultClass != nil {
 			validateDefaultClass(db.DefaultClass, p+".default_class", add)
 		}
+		db.Docs.validate(p+".docs", add)
 	}
 
 	groupNames := map[string]bool{}

@@ -45,6 +45,16 @@ databases:
   - name: prod
     labels: { env: prod }
     primary: { host: localhost, read_user: r, write_user: w, sslmode: disable }
+    docs:
+      description: Production database.
+      tables:
+        public.users: { description: One row per account., columns: { plan: "free | pro" } }
+      examples:
+        - title: Accounts per plan
+          description: All accounts.
+          sql: |
+            SELECT plan, count(*)
+            FROM users GROUP BY plan
 groups:
   - { name: dev, members: [taro@example.com] }
   - { name: sre, members: [hanako@example.com] }
@@ -324,12 +334,15 @@ func TestNotLoggedIn(t *testing.T) {
 func TestDatabasesSearchExplain(t *testing.T) {
 	newCLIEnv(t)
 	r := run(t, "", "dbs")
-	if r.err != nil || !regexp.MustCompile(`(?m)^prod\s+postgres\s+querier,writer,viewer\s+yes\s+yes\s+approval\s+\S+\s+env=prod$`).MatchString(r.stdout) {
+	if r.err != nil || !regexp.MustCompile(`(?m)^prod\s+postgres\s+querier,writer,viewer\s+yes\s+yes\s+approval\s+\S+\s+env=prod\s+Production database\.$`).MatchString(r.stdout) ||
+		!regexp.MustCompile(`LABELS\s+DESCRIPTION\n`).MatchString(r.stdout) {
 		t.Fatalf("dbs: %v\n%s", r.err, r.stdout)
 	}
 	r = run(t, "", "search", "--db", "prod", "users")
-	if r.err != nil || !strings.Contains(r.stdout, "public.users (table)") || !regexp.MustCompile(`(?m)^  email\*\s+text`).MatchString(r.stdout) ||
-		!strings.Contains(r.stdout, "* masked for you") {
+	if r.err != nil || !strings.Contains(r.stdout, "public.users (table) -- One row per account.") || !regexp.MustCompile(`(?m)^  email\*\s+text`).MatchString(r.stdout) ||
+		!regexp.MustCompile(`(?m)^  plan\s+text\s+.*-- free \| pro$`).MatchString(r.stdout) ||
+		!strings.Contains(r.stdout, "* masked for you") ||
+		!strings.Contains(r.stdout, "Examples:\n  Accounts per plan -- All accounts.\n    SELECT plan, count(*)\n    FROM users GROUP BY plan\n") {
 		t.Fatalf("search: %v\n%s", r.err, r.stdout)
 	}
 	if r := run(t, "", "search", "--db", "nope"); r.err == nil || !strings.Contains(r.err.Error(), "no access") {

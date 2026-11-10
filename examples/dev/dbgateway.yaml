@@ -40,6 +40,25 @@ databases:
       max_rows: 100
       max_bytes: 256KiB
       statement_timeout: 3s
+    # Knowledge for agents and people writing SQL (search_objects shows it
+    # next to the tables).
+    docs:
+      description: Sample SaaS database (examples/dev/initdb/01-schema.sql).
+      tables:
+        public.users:
+          description: One row per account.
+          columns:
+            plan: free or pro.
+        public.orders:
+          description: One row per purchase.
+          columns:
+            amount: Total in USD.
+      examples:
+        - title: Revenue per plan
+          sql: |
+            SELECT u.plan, sum(o.amount) AS revenue
+            FROM orders o JOIN users u ON u.id = o.user_id
+            GROUP BY u.plan
 
 groups:
   - name: developers
