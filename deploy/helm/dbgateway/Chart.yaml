@@ -5,7 +5,7 @@ type: application
 # Version of the chart, independent of the application version.
 version: 0.1.0
 # The dbgateway release. The image tag defaults to this.
-appVersion: "0.2.0"
+appVersion: "0.3.0"
 kubeVersion: ">=1.25.0-0"
 home: https://kyosu-1.github.io/dbgateway/
 icon: https://kyosu-1.github.io/dbgateway/logo.svg
