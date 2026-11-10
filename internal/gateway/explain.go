@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 	"github.com/kyosu-1/dbgateway/internal/audit"
@@ -79,10 +80,12 @@ type ExplainOutput struct {
 // ExplainPolicy evaluates sql for p exactly like ExecuteSQL (role, analysis,
 // classification, risk, policy, approval rule) but never executes it; only
 // the planner estimate (EXPLAIN) may run. It is audited as event "explain".
-func (g *Gateway) ExplainPolicy(ctx context.Context, p *identity.Principal, req ExplainRequest) (*ExplainResponse, error) {
+func (g *Gateway) ExplainPolicy(ctx context.Context, p *identity.Principal, req ExplainRequest) (_ *ExplainResponse, err error) {
+	start := time.Now()
 	rid := NewRequestID()
 	entry := &audit.Entry{RequestID: rid, TraceID: req.TraceID, Event: "explain", Principal: principalInfo(p),
 		Database: req.Database, SQLSHA256: sha256Hex(req.SQL)}
+	defer func() { g.observeLookup(p, "explain", req.Database, entry.Decision, entry.Stage, err, start) }()
 	d := g.dbs[req.Database]
 	if d == nil || !g.RBAC.Has(p, d.cfg, identity.RoleQuerier) {
 		entry.Decision, entry.Stage, entry.Rule = config.ActionDeny, string(analysis.StageRole), "role:querier"

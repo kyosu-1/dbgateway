@@ -7,6 +7,7 @@ How to run dbgateway in front of production PostgreSQL. This guide covers:
 3. Audit log retention and tamper verification
 4. The emergency bypass (direct database access without dbgateway)
 5. Identity checks in the web UI (passkeys and step-up authentication) and access to audit pages
+6. Prometheus metrics
 
 For every configuration key, see the [configuration reference](configuration.md). Replace each `<...>` below with the value for your environment.
 
@@ -364,4 +365,64 @@ The audit log search (`/audit`) and the user pages (`/users`) are available to p
 auditors:
   - group: security
   - user: alice@example.com
+```
+
+## 6. Metrics
+
+dbgateway can serve Prometheus metrics on a separate listener. It is off by default.
+
+```yaml
+server:
+  listen: 0.0.0.0:8443
+  metrics_listen: 127.0.0.1:9090   # GET /metrics
+```
+
+- `/metrics` is served **only** on `metrics_listen`, never on `listen`. The main listener is reachable by every user and agent, and metrics reveal operational details (database names, request rates, error rates). The metrics listener serves nothing else (`/healthz` stays on `listen`).
+- `/metrics` has no authentication. Keep `metrics_listen` on loopback (with a sidecar or node agent scraping it), or bind it to a private interface and allow only Prometheus to reach it (security group, firewall, Kubernetes NetworkPolicy). Configuration validation prints a warning for non-loopback addresses.
+- `metrics_listen` must not use the same port as `listen` on the same (or the wildcard) address. If the port is taken, `dbgw serve` fails at startup.
+- Counters start at zero when the process starts; use `rate()` / `increase()`. With several instances, each instance is scraped separately.
+
+**Metrics**
+
+Labels have small, fixed sets of values. `database` is a configured database name; it is empty when a request named a database that does not exist, so names made up by callers never become labels. E-mail addresses, agent names, SQL, table names and request IDs are never labels: use the [audit log](masking-and-audit.md#audit-log) for those.
+
+| Metric | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `dbgateway_requests_total` | counter | `event`, `database`, `kind`, `decision`, `stage` | Finished requests. `event`: `query`, `export`, `search`, `explain`. `kind`: `human`, `agent`. `decision`: `allow`, `deny`, `approve` (submitted for approval, or a break-glass write), `error` (database unavailable, execution failed, or the audit log could not be written). `stage`: `parse`, `role`, `policy`, or empty |
+| `dbgateway_request_duration_seconds` | histogram | `event`, `database`, `decision` | Time to handle a request, including analysis, the database and the audit write |
+| `dbgateway_rows_returned` | histogram | `database`, `kind` | Rows returned by allowed reads (`query` and `export`) |
+| `dbgateway_approval_transitions_total` | counter | `database`, `status` | Approval request state changes: `submitted`, `step_approved` (one step of a multi-step rule), `approved`, `rejected`, `canceled`, `expired`, `succeeded`, `failed` |
+| `dbgateway_events_total` | counter | `type` | [Events](notifications.md) emitted: `approval_requested`, `approval_decided`, `execution_finished`, `query_denied`, `break_glass_used`, `anomaly_detected` (only when notifications are configured), `config_changed` |
+| `dbgateway_audit_write_failures_total` | counter | | Audit entries that could not be written to the primary output. Each one failed a request closed |
+| `dbgateway_audit_forwarded_records_total` | counter | `forwarder`, `result` | Audit forwarding (`forwarder="otlp"`), by `result`: `sent`, `dropped` (queue full), `failed`. Only with `audit.otlp` |
+| `dbgateway_notification_events_total` | counter | `result` | Events offered to notifications: `published` (queued) or `dropped` (queue full). Only with notifications |
+| `dbgateway_notification_deliveries_total` | counter | `result` | Slack posts and webhook requests: `delivered`, `failed` (after retries), `skipped` (e.g. no linked Slack user). Only with notifications |
+| `dbgateway_catalog_loads_total` | counter | `database`, `result` | Catalog (schema) loads from a database: `ok` or `error` |
+| `dbgateway_catalog_load_duration_seconds` | histogram | `database` | Time to load a catalog |
+| `dbgateway_db_pool_connections` | gauge | `database`, `pool`, `state` | Open connections by `state` (`in_use`, `idle`). `pool`: `read`, `replica`, `write`. Reported once the database has been used since the start |
+| `dbgateway_db_pool_max_connections` | gauge | `database`, `pool` | Pool size limit (0: unlimited) |
+| `dbgateway_db_pool_waits_total` | counter | `database`, `pool` | Connection acquisitions that had to wait for a free connection |
+| `dbgateway_db_pool_wait_seconds_total` | counter | `database`, `pool` | Total time spent waiting for a connection |
+| `dbgateway_build_info` | gauge | `version`, `config_version` | Always 1. `config_version` is the version recorded in the audit log, useful to follow configuration rollouts |
+| `go_*`, `process_*` | | | Go runtime and process metrics |
+
+**Example alerts**
+
+```yaml
+groups:
+  - name: dbgateway
+    rules:
+      - alert: DbgatewayAuditWriteFailures      # requests are failing closed
+        expr: increase(dbgateway_audit_write_failures_total[5m]) > 0
+      - alert: DbgatewayRequestErrors
+        expr: |
+          sum by (database) (rate(dbgateway_requests_total{decision="error"}[10m]))
+            / sum by (database) (rate(dbgateway_requests_total[10m])) > 0.1
+        for: 10m
+      - alert: DbgatewayCatalogLoadErrors       # usually the database is unreachable
+        expr: increase(dbgateway_catalog_loads_total{result="error"}[10m]) > 0
+      - alert: DbgatewayNotificationFailures
+        expr: increase(dbgateway_notification_deliveries_total{result="failed"}[30m]) > 0
+      - alert: DbgatewayApprovedWritesFailing
+        expr: increase(dbgateway_approval_transitions_total{status="failed"}[1h]) > 0
 ```

@@ -6,6 +6,10 @@ server:
   listen: 127.0.0.1:8443        # TLS is terminated by a reverse proxy in front
   public_url: https://dbgateway.internal.example.com
   mode: enforce                 # enforce | shadow (record policy denials of reads instead of enforcing them)
+  # Prometheus metrics (GET /metrics) on a separate listener; off when unset.
+  # Never exposed on `listen`. /metrics has no authentication: keep it on
+  # loopback or restrict access to it (firewall, network policy).
+  # metrics_listen: 127.0.0.1:9090
 
 auth:
   oidc:

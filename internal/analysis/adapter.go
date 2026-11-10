@@ -203,3 +203,21 @@ func (r *Relation) Column(name string) *Column {
 	}
 	return nil
 }
+
+// PoolStats is a snapshot of one connection pool, for metrics.
+type PoolStats struct {
+	// Pool is read, replica or write.
+	Pool string
+	// Open is the number of open connections (in use and idle); InUse and
+	// Idle split it. Max is the configured maximum (0 when unlimited).
+	Open, InUse, Idle, Max int64
+	// WaitCount is the number of acquisitions that had to wait for a
+	// connection, and WaitDuration their total waiting time (cumulative).
+	WaitCount    int64
+	WaitDuration time.Duration
+}
+
+// PoolStatser is optionally implemented by a Conn to report its pools.
+type PoolStatser interface {
+	PoolStats() []PoolStats
+}

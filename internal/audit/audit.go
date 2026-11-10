@@ -94,6 +94,8 @@ type Logger struct {
 	sink Sink
 	prev string
 	now  func() time.Time
+	// onError is told about every entry that could not be written.
+	onError func(error)
 }
 
 // New returns a logger on sink, continuing its existing chain.
@@ -105,11 +107,27 @@ func New(sink Sink) (*Logger, error) {
 	return &Logger{sink: sink, prev: prev, now: time.Now}, nil
 }
 
+// SetErrorObserver sets f to be called, synchronously, for every entry
+// that could not be written (used for metrics). f must not block.
+func (l *Logger) SetErrorObserver(f func(error)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onError = f
+}
+
 // Write appends e. If it returns an error the caller must not return the
 // query result (fail closed).
 func (l *Logger) Write(e *Entry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	err := l.write(e)
+	if err != nil && l.onError != nil {
+		l.onError(err)
+	}
+	return err
+}
+
+func (l *Logger) write(e *Entry) error {
 	now := l.now()
 	if e.TS == "" {
 		e.TS = now.Format(time.RFC3339Nano)

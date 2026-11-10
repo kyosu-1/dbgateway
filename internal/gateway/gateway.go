@@ -42,6 +42,9 @@ type Options struct {
 	// RowsObserver, when set, is told how many rows each successful read
 	// returned (used for anomaly detection). It must not block.
 	RowsObserver func(p *events.Principal, database string, rows int64)
+	// Observer, when set, receives request and catalog measurements
+	// (metrics). It must not block.
+	Observer Observer
 }
 
 // Gateway serves requests for all configured databases.
@@ -55,15 +58,18 @@ type Gateway struct {
 	events events.Publisher
 	// rowsObserver receives returned row counts (anomaly detection).
 	rowsObserver func(p *events.Principal, database string, rows int64)
-	dbs          map[string]*database
+	// observer receives measurements for metrics; may be nil.
+	observer Observer
+	dbs      map[string]*database
 
 	// approvals handles writes that need approval; nil until SetApprovals.
 	approvals Approvals
 }
 
 type database struct {
-	cfg     *config.Database
-	adapter analysis.Adapter
+	cfg      *config.Database
+	adapter  analysis.Adapter
+	observer Observer // may be nil
 
 	mu    sync.Mutex
 	conn  analysis.Conn
@@ -86,14 +92,14 @@ func New(opts Options) (*Gateway, error) {
 		pub = events.Nop{}
 	}
 	g := &Gateway{Evaluator: ev, cfg: opts.Config, audit: opts.Audit, masker: mask.NewMasker(opts.Config), pii: mask.NewPIIDetector(opts.Config.PIIDetection), logger: logger,
-		events: pub, rowsObserver: opts.RowsObserver, dbs: map[string]*database{}}
+		events: pub, rowsObserver: opts.RowsObserver, observer: opts.Observer, dbs: map[string]*database{}}
 	for i := range opts.Config.Databases {
 		db := &opts.Config.Databases[i]
 		ad, ok := opts.Adapters[db.Type]
 		if !ok {
 			return nil, fmt.Errorf("no adapter for database type %q", db.Type)
 		}
-		g.dbs[db.Name] = &database{cfg: db, adapter: ad}
+		g.dbs[db.Name] = &database{cfg: db, adapter: ad, observer: opts.Observer}
 	}
 	return g, nil
 }
@@ -134,7 +140,11 @@ func (d *database) catalog(ctx context.Context, maxAge time.Duration) (*analysis
 	if cat != nil && time.Since(at) < maxAge {
 		return cat, nil
 	}
+	start := time.Now()
 	cat, err = d.adapter.Catalog(ctx, conn)
+	if d.observer != nil {
+		d.observer.ObserveCatalogLoad(d.cfg.Name, time.Since(start), err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +230,9 @@ type SearchResponse struct {
 var ErrNoAccess = errors.New("the database does not exist or you have no access to it; use list_databases")
 
 // SearchObjects explores tables, views and columns.
-func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req SearchRequest) (*SearchResponse, error) {
+func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req SearchRequest) (_ *SearchResponse, err error) {
+	start := time.Now()
+	defer func() { g.observeLookup(p, "search", req.Database, config.ActionAllow, "", err, start) }()
 	rid := NewRequestID()
 	d := g.dbs[req.Database]
 	if d == nil || !g.RBAC.Has(p, d.cfg, identity.RoleViewer) {
@@ -239,7 +251,6 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 	}
 	filter := analysis.ObjectFilter{Keyword: req.Keyword, Schema: req.Schema, Detail: req.Detail, Limit: req.Limit + 1}
 	var objs []analysis.Object
-	var err error
 	if req.Detail == "full" {
 		conn, cerr := d.connection(ctx)
 		if cerr != nil {
@@ -390,7 +401,7 @@ func reasonTooVague(r string) bool {
 // need approval are submitted to the approval service and reported as
 // pending, or executed immediately for a human with an active break-glass
 // elevation.
-func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req ExecuteRequest) *ExecuteResponse {
+func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req ExecuteRequest) (out *ExecuteResponse) {
 	start := time.Now()
 	resp := &ExecuteResponse{RequestID: NewRequestID()}
 	entry := &audit.Entry{RequestID: resp.RequestID, TraceID: req.TraceID, Event: "query", Principal: principalInfo(p),
@@ -398,6 +409,7 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	if req.Export != "" {
 		entry.Event, entry.Extra = "export", map[string]any{"format": req.Export}
 	}
+	defer func() { g.observeExecute(p, entry.Event, req.Database, entry.Decision, entry.Stage, out, start) }()
 	var ev *Evaluation
 	normalized := ""
 

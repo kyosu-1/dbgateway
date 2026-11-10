@@ -147,6 +147,7 @@ The body includes `time`, so discarding events that are too old protects against
 ## Operations
 
 - Up to 1024 pending events are queued in memory. Overflowing events are dropped and the count is logged (at most once a minute)
+- With [metrics](operations.md#6-metrics) enabled, dropped events and failed deliveries are counted in `dbgateway_notification_events_total` and `dbgateway_notification_deliveries_total`
 - On shutdown, dbgateway waits up to 10 seconds for pending events to be sent
 - Slack thread positions and account links are stored in the `slack_threads`, `slack_links` and `slack_link_codes` tables of the management database (SQLite or PostgreSQL)
 

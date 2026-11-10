@@ -142,7 +142,13 @@ func (failingSink) Close() error                   { return nil }
 
 func TestWriteFailureIsReported(t *testing.T) {
 	l, _ := New(failingSink{})
-	if err := l.Write(entry("x")); err == nil {
+	var observed []error
+	l.SetErrorObserver(func(err error) { observed = append(observed, err) })
+	err := l.Write(entry("x"))
+	if err == nil {
 		t.Fatal("expected error")
+	}
+	if len(observed) != 1 || observed[0] != err {
+		t.Fatalf("observed = %v, want [%v]", observed, err)
 	}
 }

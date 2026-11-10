@@ -74,6 +74,7 @@ policies:
 | `listen` | string | `127.0.0.1:8443` | Listen address (plain HTTP; terminate TLS in front) |
 | `public_url` | URL | `http://<listen>` | External URL. Plain `http` only for loopback hosts |
 | `mode` | `enforce` \| `shadow` | `enforce` | [Shadow mode](policies.md#shadow-mode) records read denials instead of enforcing them |
+| `metrics_listen` | `host:port` | (off) | Separate listener serving Prometheus metrics at `GET /metrics` ([operations.md](operations.md#6-metrics)). Must differ from `listen`; metrics are never served on `listen`. Not authenticated: a non-loopback address produces a warning |
 
 ### auth
 

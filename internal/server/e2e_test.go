@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -44,6 +45,7 @@ func env(k, def string) string {
 type stack struct {
 	base     string
 	auditDir string
+	metrics  http.Handler // nil unless metrics_listen is set
 }
 
 func start(t *testing.T) *stack {
@@ -56,7 +58,7 @@ func start(t *testing.T) *stack {
 	dir := t.TempDir()
 	t.Setenv("DBGW_E2E_PASSWORD", env("DBGW_TEST_PG_PASSWORD", "reader"))
 	yaml := fmt.Sprintf(`
-server: { listen: "%[1]s", public_url: "http://%[1]s" }
+server: { listen: "%[1]s", public_url: "http://%[1]s", metrics_listen: "127.0.0.1:1" }
 auth: { dev_login: true }
 store: { path: "%[2]s/db.sqlite" }
 audit: { dir: "%[2]s/audit" }
@@ -91,7 +93,7 @@ policies:
 	hs := &http.Server{Handler: srv.Handler()}
 	go func() { _ = hs.Serve(ln) }()
 	t.Cleanup(func() { _ = hs.Close(); srv.Close() })
-	return &stack{base: "http://" + addr, auditDir: filepath.Join(dir, "audit")}
+	return &stack{base: "http://" + addr, auditDir: filepath.Join(dir, "audit"), metrics: srv.MetricsHandler()}
 }
 
 func getJSON(t *testing.T, u string, v any) {
@@ -308,6 +310,31 @@ func TestEndToEnd(t *testing.T) {
 		"sql": "UPDATE users SET plan = 'pro' WHERE id = 1", "reason": "e2e: writes are denied in phase 1"})
 	if !res.IsError || out["status"] != "denied" {
 		t.Fatalf("write: %v", out)
+	}
+
+	// Metrics (the handler of the metrics listener; it is not started here).
+	rec := httptest.NewRecorder()
+	s.metrics.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metricsOut := rec.Body.String()
+	for _, want := range []string{
+		`dbgateway_requests_total{database="dev-main",decision="allow",event="query",kind="agent",stage="policy"} 1`,
+		`dbgateway_requests_total{database="dev-main",decision="allow",event="search",kind="agent",stage=""} 1`,
+		`dbgateway_rows_returned_count{database="dev-main",kind="agent"} 1`,
+		`dbgateway_catalog_loads_total{database="dev-main",result="ok"} 1`,
+		`dbgateway_db_pool_max_connections{database="dev-main",pool="read"} `,
+		`dbgateway_db_pool_connections{database="dev-main",pool="read",state="idle"} `,
+	} {
+		if !strings.Contains(metricsOut, want) {
+			t.Errorf("metrics lack %q", want)
+		}
+	}
+	if !regexp.MustCompile(`dbgateway_requests_total\{database="dev-main",decision="deny",event="query",kind="agent",stage="[a-z]+"\} [12]`).MatchString(metricsOut) {
+		t.Errorf("metrics lack denials:\n%s", metricsOut)
+	}
+	for _, leak := range []string{"taro@example.com", "e2e-agent", "support_tickets", "SELECT"} {
+		if strings.Contains(metricsOut, leak) {
+			t.Errorf("metrics contain %q", leak)
+		}
 	}
 
 	rep, err := audit.VerifyDir(s.auditDir)
