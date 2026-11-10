@@ -102,6 +102,10 @@ type Server struct {
 	Listen    string `yaml:"listen"`
 	PublicURL string `yaml:"public_url"`
 	Mode      Mode   `yaml:"mode"`
+	// MetricsListen is the address of a separate listener serving
+	// Prometheus metrics at GET /metrics (see metrics.go). Empty (the
+	// default) disables metrics.
+	MetricsListen string `yaml:"metrics_listen"`
 }
 
 type Auth struct {
@@ -433,6 +437,7 @@ func (c *Config) validate() error {
 	} else if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
 		add("server.public_url: plain http is only allowed for loopback hosts; terminate TLS in front of dbgateway")
 	}
+	c.validateMetricsListen(add)
 	if c.Auth.DevLogin && !isLoopbackListen(c.Server.Listen) {
 		add("auth.dev_login: only allowed when server.listen is a loopback address")
 	}

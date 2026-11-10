@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/gateway"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	mcpserver "github.com/kyosu-1/dbgateway/internal/mcp"
+	"github.com/kyosu-1/dbgateway/internal/metrics"
 	"github.com/kyosu-1/dbgateway/internal/notify"
 	"github.com/kyosu-1/dbgateway/internal/policy"
 	"github.com/kyosu-1/dbgateway/internal/scim"
@@ -49,6 +51,7 @@ type Server struct {
 	approvals *approval.Service  // nil when approvals are disabled
 	notifier  *notify.Dispatcher // nil when no notifications are configured
 	anomaly   *notify.Anomaly    // nil when no notifications are configured
+	metrics   *metrics.Metrics   // nil unless server.metrics_listen is set
 }
 
 // New builds the server from a validated configuration.
@@ -71,18 +74,35 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	}
 	s.closers = append(s.closers, func() { _ = auditLog.Close() })
 
+	if cfg.Server.MetricsListen != "" {
+		s.metrics = metrics.New(metrics.Options{Config: cfg, Version: mcpserver.Version})
+		auditLog.SetErrorObserver(s.metrics.AuditWriteFailed)
+		if fs, ok := sink.(interface{ Stats() []audit.ForwarderStats }); ok {
+			s.metrics.WatchAuditForwarders(fs.Stats)
+		}
+	}
+
 	st, err := openStore(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	s.closers = append(s.closers, func() { _ = st.Close() })
 
-	// Notifications (best effort; never affect request outcomes).
+	// Notifications (best effort; never affect request outcomes). Metrics
+	// count every event that reaches the notifier (including anomalies).
 	var pub events.Publisher = events.Nop{}
+	if s.metrics != nil {
+		pub = s.metrics
+	}
 	if cfg.NotificationsEnabled() {
 		s.notifier = notify.New(notify.Options{Config: cfg, Store: st, Logger: logger})
 		s.closers = append(s.closers, s.notifier.Close)
-		s.anomaly = notify.NewAnomaly(s.notifier, notify.AnomalyOptions{Config: cfg})
+		next := events.Publisher(s.notifier)
+		if s.metrics != nil {
+			next = events.Multi{s.metrics, s.notifier}
+			s.metrics.WatchNotifications(s.notifier.Stats)
+		}
+		s.anomaly = notify.NewAnomaly(next, notify.AnomalyOptions{Config: cfg})
 		pub = s.anomaly
 	}
 	if changed, prev, err := notify.ConfigChanged(ctx, st, cfg.Version); err != nil {
@@ -91,7 +111,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 		pub.Publish(ctx, notify.ConfigChangedEvent(prev, cfg.Version))
 	}
 
-	gw, err := gateway.New(gateway.Options{
+	gwOpts := gateway.Options{
 		Config: cfg,
 		Adapters: map[string]analysis.Adapter{
 			"postgres": postgres.New(cfg.SQL.AllowedFunctions),
@@ -105,11 +125,18 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 				s.anomaly.ObserveRows(p, db, n)
 			}
 		},
-	})
+	}
+	if s.metrics != nil {
+		gwOpts.Observer = s.metrics
+	}
+	gw, err := gateway.New(gwOpts)
 	if err != nil {
 		return nil, err
 	}
 	s.closers = append(s.closers, gw.Close)
+	if s.metrics != nil {
+		s.metrics.WatchPools(gw.PoolStats)
+	}
 
 	authSrv, err := auth.New(ctx, auth.Options{Config: cfg, Store: st, RBAC: policy.NewRBAC(cfg), Logger: logger})
 	if err != nil {
@@ -262,6 +289,18 @@ func openAuditSink(ctx context.Context, cfg *config.Config, logger *slog.Logger)
 // Handler returns the root HTTP handler (useful for tests).
 func (s *Server) Handler() http.Handler { return s.handler }
 
+// MetricsHandler returns the handler of the metrics listener (GET
+// /metrics), or nil when server.metrics_listen is not set. It is never
+// mounted on the main handler: metrics are served on their own listener.
+func (s *Server) MetricsHandler() http.Handler {
+	if s.metrics == nil {
+		return nil
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", s.metrics.Handler())
+	return mux
+}
+
 // Close releases all resources.
 func (s *Server) Close() {
 	for i := len(s.closers) - 1; i >= 0; i-- {
@@ -301,27 +340,55 @@ func (s *Server) Run(ctx context.Context) error {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	var metricsSrv *http.Server
+	var metricsLn net.Listener
+	if h := s.MetricsHandler(); h != nil {
+		// Bind before starting so that a taken port fails startup.
+		ln, err := net.Listen("tcp", s.cfg.Server.MetricsListen)
+		if err != nil {
+			return fmt.Errorf("server.metrics_listen: %w", err)
+		}
+		metricsLn = ln
+		metricsSrv = &http.Server{
+			Handler:           h,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    64 << 10,
+		}
+	}
 	s.startBackground(ctx)
 
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 
 	go func() {
 		s.logger.Info("dbgateway listening", "addr", s.cfg.Server.Listen, "public_url", s.cfg.Server.PublicURL,
 			"mode", s.cfg.Server.Mode, "config_version", s.cfg.Version)
 		errc <- srv.ListenAndServe()
 	}()
+	if metricsSrv != nil {
+		go func() {
+			s.logger.Info("metrics listening", "addr", metricsLn.Addr().String())
+			errc <- metricsSrv.Serve(metricsLn)
+		}()
+	}
+	var serveErr error
 	select {
 	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			serveErr = err
 		}
-		return err
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	s.logger.Info("shutting down")
-	return srv.Shutdown(shutdownCtx)
+	errs := []error{serveErr, srv.Shutdown(shutdownCtx)}
+	if metricsSrv != nil {
+		errs = append(errs, metricsSrv.Shutdown(shutdownCtx))
+	}
+	return errors.Join(errs...)
 }
 
 type statusRecorder struct {
