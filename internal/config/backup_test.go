@@ -30,3 +30,13 @@ func TestBackupConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionIdentityConfig(t *testing.T) {
+	if _, err := Parse([]byte("auth: { dev_login: true }\ndatabases:\n  - name: main\n    primary: { host: db, read_user: r, password_env: P }\n    session_identity: true\n")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Parse([]byte("auth: { dev_login: true }\ndatabases:\n  - name: main\n    type: mysql\n    primary: { host: db, dbname: app, read_user: r, password_env: P }\n    session_identity: true\n"))
+	if err == nil || !strings.Contains(err.Error(), "session_identity: only supported for postgres") {
+		t.Fatalf("mysql: %v", err)
+	}
+}

@@ -153,6 +153,7 @@ A list. MySQL specifics are in [mysql.md](mysql.md), IAM authentication in [oper
 | `docs` | map | | Descriptions and example queries for agents and people writing SQL; see [docs](#docs) |
 | `backup.schema` | string | | PostgreSQL only. Save the rows approved `UPDATE`/`DELETE` statements change into new tables in this schema; see [Backups and restore](./approvals#backups-and-restore) |
 | `backup.required` | bool | `false` | Deny `UPDATE`, `DELETE` and `MERGE` statements that cannot be backed up |
+| `session_identity` | bool | `false` | PostgreSQL only. Set `dbgateway.user`, `dbgateway.kind`, `dbgateway.agent`, `dbgateway.groups` and `dbgateway.request_id` for every transaction, for [row-level security](./security#row-level-security) |
 
 Endpoint keys:
 
