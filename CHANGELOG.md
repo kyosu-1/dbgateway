@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
 First public release.
 
 ### Added
@@ -19,3 +21,6 @@ First public release.
 - Slack and webhook notifications, anomaly alerts.
 - IAM database authentication for Amazon RDS and Cloud SQL, read replicas, multi-instance mode with PostgreSQL.
 - Terraform examples for ECS Fargate and Cloud Run.
+
+[Unreleased]: https://github.com/kyosu-1/dbgateway/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/kyosu-1/dbgateway/releases/tag/v0.1.0
