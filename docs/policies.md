@@ -225,6 +225,8 @@ These apply in every mode, including shadow mode, and no rule can turn them off.
 | `builtin:truncate` | `TRUNCATE`: its affected rows cannot be checked |
 | `builtin:no-approval-route` | An `approve` decision that matches no approval rule |
 | `builtin:estimate-failed` | A statement whose `EXPLAIN` failed when an estimate was needed |
+| `builtin:backup-protected` | A statement that writes to the [backup schema](./approvals#backups-and-restore), returns its columns, or reads it in anything but an `INSERT` or `UPDATE` |
+| `builtin:backup-unsupported` | With `backup.required`, an `UPDATE`, `DELETE` or `MERGE` that cannot be backed up |
 | `builtin:pii-detected` | A result in which value-based PII detection found personal data, with `pii_detection.action: deny` |
 
 ## Shadow mode

@@ -31,6 +31,7 @@ func executeResponse(r *gateway.ExecuteResponse) *dbgatewayv1.ExecuteSQLResponse
 		Notice:          r.Notice,
 		RowsAffected:    r.RowsAffected,
 		BreakGlass:      r.BreakGlass,
+		Backup:          backup(r.Backup),
 		Stage:           r.Stage,
 		Rule:            r.Rule,
 		Reason:          r.Reason,
@@ -276,9 +277,18 @@ func approvalRequest(r *approval.Request) *dbgatewayv1.ApprovalRequest {
 			Duration:     durationpb.New(time.Duration(res.DurationMS) * time.Millisecond),
 			Error:        res.Error,
 			Code:         res.Code,
+			Backup:       backup(res.Backup),
 		}
 	}
 	return out
+}
+
+func backup(b *gateway.Backup) *dbgatewayv1.Backup {
+	if b == nil {
+		return nil
+	}
+	return &dbgatewayv1.Backup{Schema: b.Schema, Table: b.Table, Source: b.Source, Rows: b.Rows,
+		RestoreSql: b.RestoreSQL, RestoreUnavailable: b.RestoreUnavailable}
 }
 
 func optTime(t *time.Time) *timestamppb.Timestamp {

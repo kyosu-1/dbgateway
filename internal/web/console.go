@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/kyosu-1/dbgateway/internal/approval"
 	"github.com/kyosu-1/dbgateway/internal/config"
 	"github.com/kyosu-1/dbgateway/internal/gateway"
 	"github.com/kyosu-1/dbgateway/internal/identity"
@@ -119,6 +120,18 @@ func (a *App) handleConsole(w http.ResponseWriter, r *http.Request) {
 			f.DB, f.SQL, open.Kind, open.Name = s.Database, s.SQL, "saved", s.Name
 		}
 		f.Panel = "saved"
+	} else if id := q.Get("restore"); id != "" && a.svc != nil {
+		// The restore statement of an executed write with a backup; it is
+		// submitted like any other write.
+		req, err := a.svc.Get(ctx, v.p, id)
+		if err != nil && !errors.Is(err, approval.ErrNotFound) {
+			a.serverError(w, r, v.ws.Email, err)
+			return
+		}
+		if req != nil && req.Result != nil && req.Result.Backup != nil && req.Result.Backup.RestoreSQL != "" {
+			f.DB, f.SQL, open.Kind, open.Name = req.Database, req.Result.Backup.RestoreSQL, "restore", "restore "+id
+			f.Reason = "Restore the rows changed by request " + id
+		}
 	}
 	a.renderConsole(w, r, v, http.StatusOK, dbs, f, nil, open)
 }

@@ -160,6 +160,14 @@ func (d *database) catalog(ctx context.Context, maxAge time.Duration) (*analysis
 	return cat, nil
 }
 
+// invalidateCatalog makes the next catalog call reload it (after a backup
+// table was created, so that its restore statement can be analyzed).
+func (d *database) invalidateCatalog() {
+	d.mu.Lock()
+	d.cat = nil
+	d.mu.Unlock()
+}
+
 // NewRequestID returns an unguessable request ID.
 func NewRequestID() string {
 	var b [16]byte
@@ -381,6 +389,8 @@ type ExecuteResponse struct {
 	// BreakGlass is true when the write ran without approval because the
 	// caller has an active break-glass elevation.
 	BreakGlass bool `json:"break_glass,omitzero"`
+	// Backup describes the backup of a write executed with break-glass.
+	Backup *Backup `json:"backup,omitempty"`
 
 	// Pending approval (status "pending").
 	Approvers       []string   `json:"approvers,omitzero"`
@@ -519,6 +529,12 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 		if g.approvals == nil {
 			return denied(analysis.StagePolicy, "builtin:approval-unavailable",
 				"Writes cannot be accepted because the approval service is unavailable.", "Contact an administrator.")
+		}
+		if b := d.cfg.Backup; b != nil && b.Required {
+			if plan, why := g.planBackup(ctx, d, req.SQL, ev); plan == nil && why != "" {
+				msg, hint := backupUnsupported(why)
+				return denied(analysis.StagePolicy, ruleBackupUnsupported, msg, hint)
+			}
 		}
 		if !p.IsAgent() && g.approvals.ElevationActive(ctx, p, d.cfg.Name) {
 			return g.breakGlassWrite(ctx, p, d, conn, req, ev, resp, entry, finish, failed)

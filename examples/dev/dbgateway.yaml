@@ -59,6 +59,7 @@ databases:
             SELECT u.plan, sum(o.amount) AS revenue
             FROM orders o JOIN users u ON u.id = o.user_id
             GROUP BY u.plan
+    backup: { schema: dbgw_backup }   # examples/dev/initdb/03-backup.sql
 
 groups:
   - name: developers

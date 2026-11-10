@@ -109,6 +109,9 @@ type Result struct {
 	// RETURNING rows had to be withheld).
 	Error string `json:"error,omitempty"`
 	Code  string `json:"code,omitempty"` // SQLSTATE
+	// Backup describes the backup taken before the write, when the
+	// database has backups configured.
+	Backup *gateway.Backup `json:"backup,omitempty"`
 }
 
 // Request is an approval request as seen by a viewer.

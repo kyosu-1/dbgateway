@@ -93,6 +93,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 	}
 	ev.Analysis = qa
 	ev.Columns = e.classifyColumns(db, p.Kind, qa.Statement.Columns)
+	if msg, bad := guardBackupSchema(db, qa); bad {
+		ev.Decision = deny(analysis.StagePolicy, ruleBackupProtected, msg,
+			"Query the original tables instead. To undo a change, use the restore statement shown with the request.")
+		return ev
+	}
 
 	st := &qa.Statement
 	approvals := e.Config.Approvals.Enabled

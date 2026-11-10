@@ -80,6 +80,8 @@ databases:
             WHERE status = 'paid'
             GROUP BY 1
             ORDER BY 1
+    backup:                     # save the rows approved UPDATE/DELETE change (restore later)
+      schema: dbgw_backup       # GRANT USAGE, CREATE ON SCHEMA dbgw_backup TO dbgw_writer
   - name: staging
     type: postgres
     labels: { env: staging }

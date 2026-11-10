@@ -115,7 +115,8 @@ func NewServer(gw *gateway.Gateway, principal PrincipalFunc, opts ...Option) *mc
 			Name:  "get_request",
 			Title: "Get approval request",
 			Description: "Get the status of a write submitted for approval (request_id from execute_sql): pending / approved / running / succeeded / failed / " +
-				"rejected / expired / canceled, approval progress, and once executed the result (rows_affected and masked RETURNING rows).",
+				"rejected / expired / canceled, approval progress, and once executed the result (rows_affected, masked RETURNING rows and, when the database keeps backups, " +
+				"backup.restore_sql: a statement that undoes the change, to submit with execute_sql only if the user asks for a restore).",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &f},
 		}, h.getRequest)
 	}

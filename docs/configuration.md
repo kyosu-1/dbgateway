@@ -151,6 +151,8 @@ A list. MySQL specifics are in [mysql.md](mysql.md), IAM authentication in [oper
 | `search_path` | list | `[public]` | Schemas for unqualified names. MySQL: the default database only |
 | `default_class` | `{human, agent}` | | Class of unclassified columns on this database |
 | `docs` | map | | Descriptions and example queries for agents and people writing SQL; see [docs](#docs) |
+| `backup.schema` | string | | PostgreSQL only. Save the rows approved `UPDATE`/`DELETE` statements change into new tables in this schema; see [Backups and restore](./approvals#backups-and-restore) |
+| `backup.required` | bool | `false` | Deny `UPDATE`, `DELETE` and `MERGE` statements that cannot be backed up |
 
 Endpoint keys:
 

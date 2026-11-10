@@ -1128,8 +1128,10 @@ type ExecuteSQLResponse struct {
 	ApprovalRule string `protobuf:"bytes,20,opt,name=approval_rule,json=approvalRule,proto3" json:"approval_rule,omitempty"`
 	// The write is rolled back if it affects more rows than this.
 	MaxAffectedRows int64 `protobuf:"varint,21,opt,name=max_affected_rows,json=maxAffectedRows,proto3" json:"max_affected_rows,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Backup of the rows a break-glass write changed.
+	Backup        *Backup `protobuf:"bytes,22,opt,name=backup,proto3" json:"backup,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecuteSQLResponse) Reset() {
@@ -1309,6 +1311,103 @@ func (x *ExecuteSQLResponse) GetMaxAffectedRows() int64 {
 	return 0
 }
 
+func (x *ExecuteSQLResponse) GetBackup() *Backup {
+	if x != nil {
+		return x.Backup
+	}
+	return nil
+}
+
+// Backup describes the copy of the rows a write changed, taken before it
+// ran when the database has backups configured. It never contains values.
+type Backup struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Schema and table holding the copy (empty when no backup was taken).
+	Schema string `protobuf:"bytes,1,opt,name=schema,proto3" json:"schema,omitempty"`
+	Table  string `protobuf:"bytes,2,opt,name=table,proto3" json:"table,omitempty"`
+	// The table that was changed (schema.table).
+	Source string `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Rows   int64  `protobuf:"varint,4,opt,name=rows,proto3" json:"rows,omitempty"`
+	// Statement that undoes the change; submit it like any other write.
+	RestoreSql string `protobuf:"bytes,5,opt,name=restore_sql,json=restoreSql,proto3" json:"restore_sql,omitempty"`
+	// Why no restore statement (or no backup) is available.
+	RestoreUnavailable string `protobuf:"bytes,6,opt,name=restore_unavailable,json=restoreUnavailable,proto3" json:"restore_unavailable,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *Backup) Reset() {
+	*x = Backup{}
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Backup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Backup) ProtoMessage() {}
+
+func (x *Backup) ProtoReflect() protoreflect.Message {
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Backup.ProtoReflect.Descriptor instead.
+func (*Backup) Descriptor() ([]byte, []int) {
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Backup) GetSchema() string {
+	if x != nil {
+		return x.Schema
+	}
+	return ""
+}
+
+func (x *Backup) GetTable() string {
+	if x != nil {
+		return x.Table
+	}
+	return ""
+}
+
+func (x *Backup) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *Backup) GetRows() int64 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *Backup) GetRestoreSql() string {
+	if x != nil {
+		return x.RestoreSql
+	}
+	return ""
+}
+
+func (x *Backup) GetRestoreUnavailable() string {
+	if x != nil {
+		return x.RestoreUnavailable
+	}
+	return ""
+}
+
 // ResultColumn describes a result column.
 type ResultColumn struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1327,7 +1426,7 @@ type ResultColumn struct {
 
 func (x *ResultColumn) Reset() {
 	*x = ResultColumn{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[11]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1339,7 +1438,7 @@ func (x *ResultColumn) String() string {
 func (*ResultColumn) ProtoMessage() {}
 
 func (x *ResultColumn) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[11]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1352,7 +1451,7 @@ func (x *ResultColumn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResultColumn.ProtoReflect.Descriptor instead.
 func (*ResultColumn) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{11}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ResultColumn) GetName() string {
@@ -1406,7 +1505,7 @@ type Row struct {
 
 func (x *Row) Reset() {
 	*x = Row{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[12]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1418,7 +1517,7 @@ func (x *Row) String() string {
 func (*Row) ProtoMessage() {}
 
 func (x *Row) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[12]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1431,7 +1530,7 @@ func (x *Row) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Row.ProtoReflect.Descriptor instead.
 func (*Row) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{12}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Row) GetValues() []*structpb.Value {
@@ -1453,7 +1552,7 @@ type ExplainPolicyRequest struct {
 
 func (x *ExplainPolicyRequest) Reset() {
 	*x = ExplainPolicyRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[13]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1465,7 +1564,7 @@ func (x *ExplainPolicyRequest) String() string {
 func (*ExplainPolicyRequest) ProtoMessage() {}
 
 func (x *ExplainPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[13]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1478,7 +1577,7 @@ func (x *ExplainPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainPolicyRequest.ProtoReflect.Descriptor instead.
 func (*ExplainPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{13}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ExplainPolicyRequest) GetDatabase() string {
@@ -1536,7 +1635,7 @@ type ExplainPolicyResponse struct {
 
 func (x *ExplainPolicyResponse) Reset() {
 	*x = ExplainPolicyResponse{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[14]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1548,7 +1647,7 @@ func (x *ExplainPolicyResponse) String() string {
 func (*ExplainPolicyResponse) ProtoMessage() {}
 
 func (x *ExplainPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[14]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1561,7 +1660,7 @@ func (x *ExplainPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainPolicyResponse.ProtoReflect.Descriptor instead.
 func (*ExplainPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{14}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ExplainPolicyResponse) GetRequestId() string {
@@ -1718,7 +1817,7 @@ type ApprovalStep struct {
 
 func (x *ApprovalStep) Reset() {
 	*x = ApprovalStep{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[15]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1730,7 +1829,7 @@ func (x *ApprovalStep) String() string {
 func (*ApprovalStep) ProtoMessage() {}
 
 func (x *ApprovalStep) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[15]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1743,7 +1842,7 @@ func (x *ApprovalStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalStep.ProtoReflect.Descriptor instead.
 func (*ApprovalStep) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{15}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ApprovalStep) GetRole() string {
@@ -1781,7 +1880,7 @@ type Statement struct {
 
 func (x *Statement) Reset() {
 	*x = Statement{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[16]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1793,7 +1892,7 @@ func (x *Statement) String() string {
 func (*Statement) ProtoMessage() {}
 
 func (x *Statement) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[16]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1806,7 +1905,7 @@ func (x *Statement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Statement.ProtoReflect.Descriptor instead.
 func (*Statement) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{16}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Statement) GetKind() string {
@@ -1840,7 +1939,7 @@ type Estimate struct {
 
 func (x *Estimate) Reset() {
 	*x = Estimate{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[17]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1852,7 +1951,7 @@ func (x *Estimate) String() string {
 func (*Estimate) ProtoMessage() {}
 
 func (x *Estimate) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[17]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1865,7 +1964,7 @@ func (x *Estimate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Estimate.ProtoReflect.Descriptor instead.
 func (*Estimate) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{17}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Estimate) GetRows() float64 {
@@ -1896,7 +1995,7 @@ type ReferencedColumn struct {
 
 func (x *ReferencedColumn) Reset() {
 	*x = ReferencedColumn{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[18]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1908,7 +2007,7 @@ func (x *ReferencedColumn) String() string {
 func (*ReferencedColumn) ProtoMessage() {}
 
 func (x *ReferencedColumn) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[18]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1921,7 +2020,7 @@ func (x *ReferencedColumn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReferencedColumn.ProtoReflect.Descriptor instead.
 func (*ReferencedColumn) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{18}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ReferencedColumn) GetName() string {
@@ -1958,7 +2057,7 @@ type OutputColumn struct {
 
 func (x *OutputColumn) Reset() {
 	*x = OutputColumn{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[19]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1970,7 +2069,7 @@ func (x *OutputColumn) String() string {
 func (*OutputColumn) ProtoMessage() {}
 
 func (x *OutputColumn) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[19]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1983,7 +2082,7 @@ func (x *OutputColumn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutputColumn.ProtoReflect.Descriptor instead.
 func (*OutputColumn) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{19}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *OutputColumn) GetName() string {
@@ -2060,7 +2159,7 @@ type ApprovalRequest struct {
 
 func (x *ApprovalRequest) Reset() {
 	*x = ApprovalRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[20]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2072,7 +2171,7 @@ func (x *ApprovalRequest) String() string {
 func (*ApprovalRequest) ProtoMessage() {}
 
 func (x *ApprovalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[20]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2085,7 +2184,7 @@ func (x *ApprovalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalRequest.ProtoReflect.Descriptor instead.
 func (*ApprovalRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{20}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ApprovalRequest) GetId() string {
@@ -2291,7 +2390,7 @@ type Requester struct {
 
 func (x *Requester) Reset() {
 	*x = Requester{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[21]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2303,7 +2402,7 @@ func (x *Requester) String() string {
 func (*Requester) ProtoMessage() {}
 
 func (x *Requester) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[21]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2316,7 +2415,7 @@ func (x *Requester) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Requester.ProtoReflect.Descriptor instead.
 func (*Requester) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{21}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Requester) GetKind() TokenKind {
@@ -2363,7 +2462,7 @@ type Approval struct {
 
 func (x *Approval) Reset() {
 	*x = Approval{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[22]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2375,7 +2474,7 @@ func (x *Approval) String() string {
 func (*Approval) ProtoMessage() {}
 
 func (x *Approval) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[22]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2388,7 +2487,7 @@ func (x *Approval) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Approval.ProtoReflect.Descriptor instead.
 func (*Approval) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{22}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Approval) GetStep() int32 {
@@ -2440,14 +2539,16 @@ type RequestResult struct {
 	// withheld).
 	Error string `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
 	// SQLSTATE.
-	Code          string `protobuf:"bytes,8,opt,name=code,proto3" json:"code,omitempty"`
+	Code string `protobuf:"bytes,8,opt,name=code,proto3" json:"code,omitempty"`
+	// Backup of the rows the write changed.
+	Backup        *Backup `protobuf:"bytes,9,opt,name=backup,proto3" json:"backup,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RequestResult) Reset() {
 	*x = RequestResult{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[23]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2459,7 +2560,7 @@ func (x *RequestResult) String() string {
 func (*RequestResult) ProtoMessage() {}
 
 func (x *RequestResult) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[23]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2472,7 +2573,7 @@ func (x *RequestResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestResult.ProtoReflect.Descriptor instead.
 func (*RequestResult) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{23}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RequestResult) GetRowsAffected() int64 {
@@ -2531,6 +2632,13 @@ func (x *RequestResult) GetCode() string {
 	return ""
 }
 
+func (x *RequestResult) GetBackup() *Backup {
+	if x != nil {
+		return x.Backup
+	}
+	return nil
+}
+
 type GetRequestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Request ID (the request_id of a PENDING ExecuteSQL response).
@@ -2541,7 +2649,7 @@ type GetRequestRequest struct {
 
 func (x *GetRequestRequest) Reset() {
 	*x = GetRequestRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[24]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2553,7 +2661,7 @@ func (x *GetRequestRequest) String() string {
 func (*GetRequestRequest) ProtoMessage() {}
 
 func (x *GetRequestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[24]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2566,7 +2674,7 @@ func (x *GetRequestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequestRequest.ProtoReflect.Descriptor instead.
 func (*GetRequestRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{24}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetRequestRequest) GetId() string {
@@ -2587,7 +2695,7 @@ type GetRequestResponse struct {
 
 func (x *GetRequestResponse) Reset() {
 	*x = GetRequestResponse{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[25]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2599,7 +2707,7 @@ func (x *GetRequestResponse) String() string {
 func (*GetRequestResponse) ProtoMessage() {}
 
 func (x *GetRequestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[25]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2612,7 +2720,7 @@ func (x *GetRequestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequestResponse.ProtoReflect.Descriptor instead.
 func (*GetRequestResponse) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{25}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetRequestResponse) GetRequest() *ApprovalRequest {
@@ -2642,7 +2750,7 @@ type ListRequestsRequest struct {
 
 func (x *ListRequestsRequest) Reset() {
 	*x = ListRequestsRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[26]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2654,7 +2762,7 @@ func (x *ListRequestsRequest) String() string {
 func (*ListRequestsRequest) ProtoMessage() {}
 
 func (x *ListRequestsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[26]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2667,7 +2775,7 @@ func (x *ListRequestsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequestsRequest.ProtoReflect.Descriptor instead.
 func (*ListRequestsRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{26}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListRequestsRequest) GetScope() RequestScope {
@@ -2700,7 +2808,7 @@ type ListRequestsResponse struct {
 
 func (x *ListRequestsResponse) Reset() {
 	*x = ListRequestsResponse{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[27]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2712,7 +2820,7 @@ func (x *ListRequestsResponse) String() string {
 func (*ListRequestsResponse) ProtoMessage() {}
 
 func (x *ListRequestsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[27]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2725,7 +2833,7 @@ func (x *ListRequestsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequestsResponse.ProtoReflect.Descriptor instead.
 func (*ListRequestsResponse) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{27}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListRequestsResponse) GetRequests() []*ApprovalRequest {
@@ -2744,7 +2852,7 @@ type CancelRequestRequest struct {
 
 func (x *CancelRequestRequest) Reset() {
 	*x = CancelRequestRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[28]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2756,7 +2864,7 @@ func (x *CancelRequestRequest) String() string {
 func (*CancelRequestRequest) ProtoMessage() {}
 
 func (x *CancelRequestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[28]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2769,7 +2877,7 @@ func (x *CancelRequestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequestRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequestRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{28}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *CancelRequestRequest) GetId() string {
@@ -2788,7 +2896,7 @@ type CancelRequestResponse struct {
 
 func (x *CancelRequestResponse) Reset() {
 	*x = CancelRequestResponse{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[29]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2800,7 +2908,7 @@ func (x *CancelRequestResponse) String() string {
 func (*CancelRequestResponse) ProtoMessage() {}
 
 func (x *CancelRequestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[29]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2813,7 +2921,7 @@ func (x *CancelRequestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequestResponse.ProtoReflect.Descriptor instead.
 func (*CancelRequestResponse) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{29}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CancelRequestResponse) GetRequest() *ApprovalRequest {
@@ -2834,7 +2942,7 @@ type RejectRequestRequest struct {
 
 func (x *RejectRequestRequest) Reset() {
 	*x = RejectRequestRequest{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[30]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2846,7 +2954,7 @@ func (x *RejectRequestRequest) String() string {
 func (*RejectRequestRequest) ProtoMessage() {}
 
 func (x *RejectRequestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[30]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2859,7 +2967,7 @@ func (x *RejectRequestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RejectRequestRequest.ProtoReflect.Descriptor instead.
 func (*RejectRequestRequest) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{30}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RejectRequestRequest) GetId() string {
@@ -2885,7 +2993,7 @@ type RejectRequestResponse struct {
 
 func (x *RejectRequestResponse) Reset() {
 	*x = RejectRequestResponse{}
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[31]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2897,7 +3005,7 @@ func (x *RejectRequestResponse) String() string {
 func (*RejectRequestResponse) ProtoMessage() {}
 
 func (x *RejectRequestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dbgateway_v1_gateway_proto_msgTypes[31]
+	mi := &file_dbgateway_v1_gateway_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2910,7 +3018,7 @@ func (x *RejectRequestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RejectRequestResponse.ProtoReflect.Descriptor instead.
 func (*RejectRequestResponse) Descriptor() ([]byte, []int) {
-	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{31}
+	return file_dbgateway_v1_gateway_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *RejectRequestResponse) GetRequest() *ApprovalRequest {
@@ -2987,7 +3095,7 @@ const file_dbgateway_v1_gateway_proto_rawDesc = "" +
 	"\x11ExecuteSQLRequest\x12\x1a\n" +
 	"\bdatabase\x18\x01 \x01(\tR\bdatabase\x12\x10\n" +
 	"\x03sql\x18\x02 \x01(\tR\x03sql\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xf5\x05\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xa3\x06\n" +
 	"\x12ExecuteSQLResponse\x123\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x1b.dbgateway.v1.ExecuteStatusR\x06status\x12\x1d\n" +
 	"\n" +
@@ -3014,9 +3122,18 @@ const file_dbgateway_v1_gateway_proto_rawDesc = "" +
 	"\fapproval_url\x18\x12 \x01(\tR\vapprovalUrl\x12\x12\n" +
 	"\x04risk\x18\x13 \x01(\tR\x04risk\x12#\n" +
 	"\rapproval_rule\x18\x14 \x01(\tR\fapprovalRule\x12*\n" +
-	"\x11max_affected_rows\x18\x15 \x01(\x03R\x0fmaxAffectedRowsB\r\n" +
+	"\x11max_affected_rows\x18\x15 \x01(\x03R\x0fmaxAffectedRows\x12,\n" +
+	"\x06backup\x18\x16 \x01(\v2\x14.dbgateway.v1.BackupR\x06backupB\r\n" +
 	"\v_total_rowsB\x10\n" +
-	"\x0e_rows_affected\"\x80\x01\n" +
+	"\x0e_rows_affected\"\xb4\x01\n" +
+	"\x06Backup\x12\x16\n" +
+	"\x06schema\x18\x01 \x01(\tR\x06schema\x12\x14\n" +
+	"\x05table\x18\x02 \x01(\tR\x05table\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x12\x12\n" +
+	"\x04rows\x18\x04 \x01(\x03R\x04rows\x12\x1f\n" +
+	"\vrestore_sql\x18\x05 \x01(\tR\n" +
+	"restoreSql\x12/\n" +
+	"\x13restore_unavailable\x18\x06 \x01(\tR\x12restoreUnavailable\"\x80\x01\n" +
 	"\fResultColumn\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x16\n" +
@@ -3118,7 +3235,7 @@ const file_dbgateway_v1_gateway_proto_rawDesc = "" +
 	"\fapprove_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vapproveTime\x12$\n" +
 	"\x0estep_up_method\x18\x04 \x01(\tR\fstepUpMethod\x12<\n" +
 	"\fstep_up_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"stepUpTime\"\xad\x02\n" +
+	"stepUpTime\"\xdb\x02\n" +
 	"\rRequestResult\x12#\n" +
 	"\rrows_affected\x18\x01 \x01(\x03R\frowsAffected\x124\n" +
 	"\acolumns\x18\x02 \x03(\v2\x1a.dbgateway.v1.ResultColumnR\acolumns\x12%\n" +
@@ -3127,7 +3244,8 @@ const file_dbgateway_v1_gateway_proto_rawDesc = "" +
 	"\ttruncated\x18\x05 \x01(\bR\ttruncated\x125\n" +
 	"\bduration\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x14\n" +
 	"\x05error\x18\a \x01(\tR\x05error\x12\x12\n" +
-	"\x04code\x18\b \x01(\tR\x04code\"#\n" +
+	"\x04code\x18\b \x01(\tR\x04code\x12,\n" +
+	"\x06backup\x18\t \x01(\v2\x14.dbgateway.v1.BackupR\x06backup\"#\n" +
 	"\x11GetRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"e\n" +
 	"\x12GetRequestResponse\x127\n" +
@@ -3204,7 +3322,7 @@ func file_dbgateway_v1_gateway_proto_rawDescGZIP() []byte {
 }
 
 var file_dbgateway_v1_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_dbgateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_dbgateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_dbgateway_v1_gateway_proto_goTypes = []any{
 	(ObjectDetail)(0),             // 0: dbgateway.v1.ObjectDetail
 	(ExecuteStatus)(0),            // 1: dbgateway.v1.ExecuteStatus
@@ -3222,96 +3340,99 @@ var file_dbgateway_v1_gateway_proto_goTypes = []any{
 	(*ObjectIndex)(nil),           // 13: dbgateway.v1.ObjectIndex
 	(*ExecuteSQLRequest)(nil),     // 14: dbgateway.v1.ExecuteSQLRequest
 	(*ExecuteSQLResponse)(nil),    // 15: dbgateway.v1.ExecuteSQLResponse
-	(*ResultColumn)(nil),          // 16: dbgateway.v1.ResultColumn
-	(*Row)(nil),                   // 17: dbgateway.v1.Row
-	(*ExplainPolicyRequest)(nil),  // 18: dbgateway.v1.ExplainPolicyRequest
-	(*ExplainPolicyResponse)(nil), // 19: dbgateway.v1.ExplainPolicyResponse
-	(*ApprovalStep)(nil),          // 20: dbgateway.v1.ApprovalStep
-	(*Statement)(nil),             // 21: dbgateway.v1.Statement
-	(*Estimate)(nil),              // 22: dbgateway.v1.Estimate
-	(*ReferencedColumn)(nil),      // 23: dbgateway.v1.ReferencedColumn
-	(*OutputColumn)(nil),          // 24: dbgateway.v1.OutputColumn
-	(*ApprovalRequest)(nil),       // 25: dbgateway.v1.ApprovalRequest
-	(*Requester)(nil),             // 26: dbgateway.v1.Requester
-	(*Approval)(nil),              // 27: dbgateway.v1.Approval
-	(*RequestResult)(nil),         // 28: dbgateway.v1.RequestResult
-	(*GetRequestRequest)(nil),     // 29: dbgateway.v1.GetRequestRequest
-	(*GetRequestResponse)(nil),    // 30: dbgateway.v1.GetRequestResponse
-	(*ListRequestsRequest)(nil),   // 31: dbgateway.v1.ListRequestsRequest
-	(*ListRequestsResponse)(nil),  // 32: dbgateway.v1.ListRequestsResponse
-	(*CancelRequestRequest)(nil),  // 33: dbgateway.v1.CancelRequestRequest
-	(*CancelRequestResponse)(nil), // 34: dbgateway.v1.CancelRequestResponse
-	(*RejectRequestRequest)(nil),  // 35: dbgateway.v1.RejectRequestRequest
-	(*RejectRequestResponse)(nil), // 36: dbgateway.v1.RejectRequestResponse
-	nil,                           // 37: dbgateway.v1.Database.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 38: google.protobuf.Timestamp
-	(*structpb.Value)(nil),        // 39: google.protobuf.Value
-	(*durationpb.Duration)(nil),   // 40: google.protobuf.Duration
-	(TokenKind)(0),                // 41: dbgateway.v1.TokenKind
+	(*Backup)(nil),                // 16: dbgateway.v1.Backup
+	(*ResultColumn)(nil),          // 17: dbgateway.v1.ResultColumn
+	(*Row)(nil),                   // 18: dbgateway.v1.Row
+	(*ExplainPolicyRequest)(nil),  // 19: dbgateway.v1.ExplainPolicyRequest
+	(*ExplainPolicyResponse)(nil), // 20: dbgateway.v1.ExplainPolicyResponse
+	(*ApprovalStep)(nil),          // 21: dbgateway.v1.ApprovalStep
+	(*Statement)(nil),             // 22: dbgateway.v1.Statement
+	(*Estimate)(nil),              // 23: dbgateway.v1.Estimate
+	(*ReferencedColumn)(nil),      // 24: dbgateway.v1.ReferencedColumn
+	(*OutputColumn)(nil),          // 25: dbgateway.v1.OutputColumn
+	(*ApprovalRequest)(nil),       // 26: dbgateway.v1.ApprovalRequest
+	(*Requester)(nil),             // 27: dbgateway.v1.Requester
+	(*Approval)(nil),              // 28: dbgateway.v1.Approval
+	(*RequestResult)(nil),         // 29: dbgateway.v1.RequestResult
+	(*GetRequestRequest)(nil),     // 30: dbgateway.v1.GetRequestRequest
+	(*GetRequestResponse)(nil),    // 31: dbgateway.v1.GetRequestResponse
+	(*ListRequestsRequest)(nil),   // 32: dbgateway.v1.ListRequestsRequest
+	(*ListRequestsResponse)(nil),  // 33: dbgateway.v1.ListRequestsResponse
+	(*CancelRequestRequest)(nil),  // 34: dbgateway.v1.CancelRequestRequest
+	(*CancelRequestResponse)(nil), // 35: dbgateway.v1.CancelRequestResponse
+	(*RejectRequestRequest)(nil),  // 36: dbgateway.v1.RejectRequestRequest
+	(*RejectRequestResponse)(nil), // 37: dbgateway.v1.RejectRequestResponse
+	nil,                           // 38: dbgateway.v1.Database.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 39: google.protobuf.Timestamp
+	(*structpb.Value)(nil),        // 40: google.protobuf.Value
+	(*durationpb.Duration)(nil),   // 41: google.protobuf.Duration
+	(TokenKind)(0),                // 42: dbgateway.v1.TokenKind
 }
 var file_dbgateway_v1_gateway_proto_depIdxs = []int32{
 	7,  // 0: dbgateway.v1.ListDatabasesResponse.databases:type_name -> dbgateway.v1.Database
-	37, // 1: dbgateway.v1.Database.labels:type_name -> dbgateway.v1.Database.LabelsEntry
+	38, // 1: dbgateway.v1.Database.labels:type_name -> dbgateway.v1.Database.LabelsEntry
 	0,  // 2: dbgateway.v1.SearchObjectsRequest.detail:type_name -> dbgateway.v1.ObjectDetail
 	10, // 3: dbgateway.v1.SearchObjectsResponse.objects:type_name -> dbgateway.v1.SchemaObject
 	12, // 4: dbgateway.v1.SearchObjectsResponse.examples:type_name -> dbgateway.v1.ExampleQuery
 	11, // 5: dbgateway.v1.SchemaObject.columns:type_name -> dbgateway.v1.ObjectColumn
 	13, // 6: dbgateway.v1.SchemaObject.indexes:type_name -> dbgateway.v1.ObjectIndex
 	1,  // 7: dbgateway.v1.ExecuteSQLResponse.status:type_name -> dbgateway.v1.ExecuteStatus
-	16, // 8: dbgateway.v1.ExecuteSQLResponse.columns:type_name -> dbgateway.v1.ResultColumn
-	17, // 9: dbgateway.v1.ExecuteSQLResponse.rows:type_name -> dbgateway.v1.Row
-	38, // 10: dbgateway.v1.ExecuteSQLResponse.expire_time:type_name -> google.protobuf.Timestamp
-	39, // 11: dbgateway.v1.Row.values:type_name -> google.protobuf.Value
-	2,  // 12: dbgateway.v1.ExplainPolicyResponse.decision:type_name -> dbgateway.v1.PolicyDecision
-	20, // 13: dbgateway.v1.ExplainPolicyResponse.approval_steps:type_name -> dbgateway.v1.ApprovalStep
-	40, // 14: dbgateway.v1.ExplainPolicyResponse.expire_after:type_name -> google.protobuf.Duration
-	21, // 15: dbgateway.v1.ExplainPolicyResponse.statement:type_name -> dbgateway.v1.Statement
-	22, // 16: dbgateway.v1.ExplainPolicyResponse.estimate:type_name -> dbgateway.v1.Estimate
-	23, // 17: dbgateway.v1.ExplainPolicyResponse.columns:type_name -> dbgateway.v1.ReferencedColumn
-	24, // 18: dbgateway.v1.ExplainPolicyResponse.output:type_name -> dbgateway.v1.OutputColumn
-	3,  // 19: dbgateway.v1.ApprovalRequest.status:type_name -> dbgateway.v1.ApprovalStatus
-	26, // 20: dbgateway.v1.ApprovalRequest.requester:type_name -> dbgateway.v1.Requester
-	23, // 21: dbgateway.v1.ApprovalRequest.columns:type_name -> dbgateway.v1.ReferencedColumn
-	20, // 22: dbgateway.v1.ApprovalRequest.steps:type_name -> dbgateway.v1.ApprovalStep
-	27, // 23: dbgateway.v1.ApprovalRequest.approvals:type_name -> dbgateway.v1.Approval
-	38, // 24: dbgateway.v1.ApprovalRequest.create_time:type_name -> google.protobuf.Timestamp
-	38, // 25: dbgateway.v1.ApprovalRequest.expire_time:type_name -> google.protobuf.Timestamp
-	38, // 26: dbgateway.v1.ApprovalRequest.decide_time:type_name -> google.protobuf.Timestamp
-	38, // 27: dbgateway.v1.ApprovalRequest.start_time:type_name -> google.protobuf.Timestamp
-	38, // 28: dbgateway.v1.ApprovalRequest.finish_time:type_name -> google.protobuf.Timestamp
-	28, // 29: dbgateway.v1.ApprovalRequest.result:type_name -> dbgateway.v1.RequestResult
-	41, // 30: dbgateway.v1.Requester.kind:type_name -> dbgateway.v1.TokenKind
-	38, // 31: dbgateway.v1.Approval.approve_time:type_name -> google.protobuf.Timestamp
-	38, // 32: dbgateway.v1.Approval.step_up_time:type_name -> google.protobuf.Timestamp
-	16, // 33: dbgateway.v1.RequestResult.columns:type_name -> dbgateway.v1.ResultColumn
-	17, // 34: dbgateway.v1.RequestResult.rows:type_name -> dbgateway.v1.Row
-	40, // 35: dbgateway.v1.RequestResult.duration:type_name -> google.protobuf.Duration
-	25, // 36: dbgateway.v1.GetRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
-	4,  // 37: dbgateway.v1.ListRequestsRequest.scope:type_name -> dbgateway.v1.RequestScope
-	25, // 38: dbgateway.v1.ListRequestsResponse.requests:type_name -> dbgateway.v1.ApprovalRequest
-	25, // 39: dbgateway.v1.CancelRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
-	25, // 40: dbgateway.v1.RejectRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
-	5,  // 41: dbgateway.v1.GatewayService.ListDatabases:input_type -> dbgateway.v1.ListDatabasesRequest
-	8,  // 42: dbgateway.v1.GatewayService.SearchObjects:input_type -> dbgateway.v1.SearchObjectsRequest
-	14, // 43: dbgateway.v1.GatewayService.ExecuteSQL:input_type -> dbgateway.v1.ExecuteSQLRequest
-	18, // 44: dbgateway.v1.GatewayService.ExplainPolicy:input_type -> dbgateway.v1.ExplainPolicyRequest
-	29, // 45: dbgateway.v1.GatewayService.GetRequest:input_type -> dbgateway.v1.GetRequestRequest
-	31, // 46: dbgateway.v1.GatewayService.ListRequests:input_type -> dbgateway.v1.ListRequestsRequest
-	33, // 47: dbgateway.v1.GatewayService.CancelRequest:input_type -> dbgateway.v1.CancelRequestRequest
-	35, // 48: dbgateway.v1.GatewayService.RejectRequest:input_type -> dbgateway.v1.RejectRequestRequest
-	6,  // 49: dbgateway.v1.GatewayService.ListDatabases:output_type -> dbgateway.v1.ListDatabasesResponse
-	9,  // 50: dbgateway.v1.GatewayService.SearchObjects:output_type -> dbgateway.v1.SearchObjectsResponse
-	15, // 51: dbgateway.v1.GatewayService.ExecuteSQL:output_type -> dbgateway.v1.ExecuteSQLResponse
-	19, // 52: dbgateway.v1.GatewayService.ExplainPolicy:output_type -> dbgateway.v1.ExplainPolicyResponse
-	30, // 53: dbgateway.v1.GatewayService.GetRequest:output_type -> dbgateway.v1.GetRequestResponse
-	32, // 54: dbgateway.v1.GatewayService.ListRequests:output_type -> dbgateway.v1.ListRequestsResponse
-	34, // 55: dbgateway.v1.GatewayService.CancelRequest:output_type -> dbgateway.v1.CancelRequestResponse
-	36, // 56: dbgateway.v1.GatewayService.RejectRequest:output_type -> dbgateway.v1.RejectRequestResponse
-	49, // [49:57] is the sub-list for method output_type
-	41, // [41:49] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	17, // 8: dbgateway.v1.ExecuteSQLResponse.columns:type_name -> dbgateway.v1.ResultColumn
+	18, // 9: dbgateway.v1.ExecuteSQLResponse.rows:type_name -> dbgateway.v1.Row
+	39, // 10: dbgateway.v1.ExecuteSQLResponse.expire_time:type_name -> google.protobuf.Timestamp
+	16, // 11: dbgateway.v1.ExecuteSQLResponse.backup:type_name -> dbgateway.v1.Backup
+	40, // 12: dbgateway.v1.Row.values:type_name -> google.protobuf.Value
+	2,  // 13: dbgateway.v1.ExplainPolicyResponse.decision:type_name -> dbgateway.v1.PolicyDecision
+	21, // 14: dbgateway.v1.ExplainPolicyResponse.approval_steps:type_name -> dbgateway.v1.ApprovalStep
+	41, // 15: dbgateway.v1.ExplainPolicyResponse.expire_after:type_name -> google.protobuf.Duration
+	22, // 16: dbgateway.v1.ExplainPolicyResponse.statement:type_name -> dbgateway.v1.Statement
+	23, // 17: dbgateway.v1.ExplainPolicyResponse.estimate:type_name -> dbgateway.v1.Estimate
+	24, // 18: dbgateway.v1.ExplainPolicyResponse.columns:type_name -> dbgateway.v1.ReferencedColumn
+	25, // 19: dbgateway.v1.ExplainPolicyResponse.output:type_name -> dbgateway.v1.OutputColumn
+	3,  // 20: dbgateway.v1.ApprovalRequest.status:type_name -> dbgateway.v1.ApprovalStatus
+	27, // 21: dbgateway.v1.ApprovalRequest.requester:type_name -> dbgateway.v1.Requester
+	24, // 22: dbgateway.v1.ApprovalRequest.columns:type_name -> dbgateway.v1.ReferencedColumn
+	21, // 23: dbgateway.v1.ApprovalRequest.steps:type_name -> dbgateway.v1.ApprovalStep
+	28, // 24: dbgateway.v1.ApprovalRequest.approvals:type_name -> dbgateway.v1.Approval
+	39, // 25: dbgateway.v1.ApprovalRequest.create_time:type_name -> google.protobuf.Timestamp
+	39, // 26: dbgateway.v1.ApprovalRequest.expire_time:type_name -> google.protobuf.Timestamp
+	39, // 27: dbgateway.v1.ApprovalRequest.decide_time:type_name -> google.protobuf.Timestamp
+	39, // 28: dbgateway.v1.ApprovalRequest.start_time:type_name -> google.protobuf.Timestamp
+	39, // 29: dbgateway.v1.ApprovalRequest.finish_time:type_name -> google.protobuf.Timestamp
+	29, // 30: dbgateway.v1.ApprovalRequest.result:type_name -> dbgateway.v1.RequestResult
+	42, // 31: dbgateway.v1.Requester.kind:type_name -> dbgateway.v1.TokenKind
+	39, // 32: dbgateway.v1.Approval.approve_time:type_name -> google.protobuf.Timestamp
+	39, // 33: dbgateway.v1.Approval.step_up_time:type_name -> google.protobuf.Timestamp
+	17, // 34: dbgateway.v1.RequestResult.columns:type_name -> dbgateway.v1.ResultColumn
+	18, // 35: dbgateway.v1.RequestResult.rows:type_name -> dbgateway.v1.Row
+	41, // 36: dbgateway.v1.RequestResult.duration:type_name -> google.protobuf.Duration
+	16, // 37: dbgateway.v1.RequestResult.backup:type_name -> dbgateway.v1.Backup
+	26, // 38: dbgateway.v1.GetRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
+	4,  // 39: dbgateway.v1.ListRequestsRequest.scope:type_name -> dbgateway.v1.RequestScope
+	26, // 40: dbgateway.v1.ListRequestsResponse.requests:type_name -> dbgateway.v1.ApprovalRequest
+	26, // 41: dbgateway.v1.CancelRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
+	26, // 42: dbgateway.v1.RejectRequestResponse.request:type_name -> dbgateway.v1.ApprovalRequest
+	5,  // 43: dbgateway.v1.GatewayService.ListDatabases:input_type -> dbgateway.v1.ListDatabasesRequest
+	8,  // 44: dbgateway.v1.GatewayService.SearchObjects:input_type -> dbgateway.v1.SearchObjectsRequest
+	14, // 45: dbgateway.v1.GatewayService.ExecuteSQL:input_type -> dbgateway.v1.ExecuteSQLRequest
+	19, // 46: dbgateway.v1.GatewayService.ExplainPolicy:input_type -> dbgateway.v1.ExplainPolicyRequest
+	30, // 47: dbgateway.v1.GatewayService.GetRequest:input_type -> dbgateway.v1.GetRequestRequest
+	32, // 48: dbgateway.v1.GatewayService.ListRequests:input_type -> dbgateway.v1.ListRequestsRequest
+	34, // 49: dbgateway.v1.GatewayService.CancelRequest:input_type -> dbgateway.v1.CancelRequestRequest
+	36, // 50: dbgateway.v1.GatewayService.RejectRequest:input_type -> dbgateway.v1.RejectRequestRequest
+	6,  // 51: dbgateway.v1.GatewayService.ListDatabases:output_type -> dbgateway.v1.ListDatabasesResponse
+	9,  // 52: dbgateway.v1.GatewayService.SearchObjects:output_type -> dbgateway.v1.SearchObjectsResponse
+	15, // 53: dbgateway.v1.GatewayService.ExecuteSQL:output_type -> dbgateway.v1.ExecuteSQLResponse
+	20, // 54: dbgateway.v1.GatewayService.ExplainPolicy:output_type -> dbgateway.v1.ExplainPolicyResponse
+	31, // 55: dbgateway.v1.GatewayService.GetRequest:output_type -> dbgateway.v1.GetRequestResponse
+	33, // 56: dbgateway.v1.GatewayService.ListRequests:output_type -> dbgateway.v1.ListRequestsResponse
+	35, // 57: dbgateway.v1.GatewayService.CancelRequest:output_type -> dbgateway.v1.CancelRequestResponse
+	37, // 58: dbgateway.v1.GatewayService.RejectRequest:output_type -> dbgateway.v1.RejectRequestResponse
+	51, // [51:59] is the sub-list for method output_type
+	43, // [43:51] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_dbgateway_v1_gateway_proto_init() }
@@ -3328,7 +3449,7 @@ func file_dbgateway_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dbgateway_v1_gateway_proto_rawDesc), len(file_dbgateway_v1_gateway_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

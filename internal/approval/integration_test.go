@@ -95,6 +95,12 @@ type harness struct {
 
 func setup(t *testing.T) *harness {
 	t.Helper()
+	return setupWith(t, "")
+}
+
+// setupWith appends dbExtra (indented YAML keys) to the database entry.
+func setupWith(t *testing.T, dbExtra string) *harness {
+	t.Helper()
 	t.Setenv("DBGW_IT_PASSWORD", env("DBGW_TEST_PG_PASSWORD", "reader"))
 	t.Setenv("DBGW_IT_WRITER_PASSWORD", env("DBGW_TEST_PG_WRITER_PASSWORD", "writer"))
 	yaml := fmt.Sprintf(`
@@ -114,7 +120,7 @@ databases:
       sslmode: %s
       sslrootcert: "%s"
     limits: { max_rows: 50, statement_timeout: 3s }
-groups:
+%[6]sgroups:
   - { name: dev, members: [taro@example.com] }
   - { name: sre, members: [hanako@example.com] }
 role_bindings:
@@ -134,7 +140,7 @@ approval_rules:
 break_glass:
   databases: "*"
 `, env("DBGW_TEST_PG_HOST", "127.0.0.1"), env("DBGW_TEST_PG_PORT", "55432"),
-		env("DBGW_TEST_PG_SSLMODE", "disable"), env("DBGW_TEST_PG_SSLROOTCERT", ""), table)
+		env("DBGW_TEST_PG_SSLMODE", "disable"), env("DBGW_TEST_PG_SSLROOTCERT", ""), table, dbExtra)
 	cfg, err := config.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatal(err)

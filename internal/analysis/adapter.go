@@ -49,6 +49,10 @@ type ExecOptions struct {
 	// MaxAffectedRows bounds the rows a write may affect (required, > 0,
 	// for writes).
 	MaxAffectedRows int64
+	// Backup, for writes, saves the rows the statement changes before it
+	// runs (see BackupSpec). Execute then fails with a *BackupError unless
+	// the backup holds exactly the affected rows.
+	Backup *BackupSpec
 }
 
 // AffectedRowsError is returned by Execute when a write affected more rows
@@ -80,6 +84,8 @@ type Result struct {
 	Duration  time.Duration
 	// RowsAffected is the number of rows a write changed (0 for reads).
 	RowsAffected int64
+	// Backup is set when ExecOptions.Backup was requested.
+	Backup *BackupResult
 }
 
 // ResultColumn is the name and database type of a result column.

@@ -87,6 +87,15 @@
 <div class="table-wrap">{{template "datatable" .}}</div>
 {{if $.Result.Truncated}}<p class="notice-text">{{t "approval.result_truncated"}}</p>{{end}}
 {{end}}
+{{with .Backup}}
+<h3>{{t "approval.backup_heading"}}</h3>
+{{if .Table}}<p>{{t "approval.backup_taken" .Rows .Schema .Table}}</p>{{end}}
+{{with $.RestoreSQL}}
+<p>{{t "approval.backup_restore_note"}}</p>
+{{template "sql" .}}
+<p><a class="btn btn-secondary btn-sm btn-link" href="{{$.RestoreURL}}">{{t "approval.backup_restore"}}</a></p>
+{{else}}{{with .RestoreUnavailable}}<p class="notice-text">{{.}}</p>{{end}}{{end}}
+{{end}}
 </section>
 {{end}}
 

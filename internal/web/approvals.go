@@ -226,6 +226,10 @@ func (a *App) renderApproval(w http.ResponseWriter, r *http.Request, v *viewer, 
 			data["ResultTable"] = newTableView(req.Result.Columns, req.Result.Rows)
 		}
 		data["ResultError"] = ui.InertText(req.Result.Error)
+		if b := req.Result.Backup; b != nil && b.RestoreSQL != "" {
+			data["RestoreSQL"] = ui.HighlightSQL(b.RestoreSQL)
+			data["RestoreURL"] = "/console?restore=" + url.QueryEscape(req.ID)
+		}
 	}
 	a.render(w, r, v, status, "approval", "title.approval", "approvals", ui.WidthDefault, data)
 }

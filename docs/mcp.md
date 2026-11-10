@@ -12,7 +12,7 @@ The tool set is deliberately small so it costs little context and is hard to mis
 | `search_objects` | `database`, `keyword`, `schema`, `detail` (`names`, `summary` default, `full`), `limit` (default 50, max 200) | Tables and views with columns, types and data class, configured descriptions, and example queries that use them. Columns hidden from you have `masked: true`. `full` adds indexes, database comments and row estimates |
 | `execute_sql` | `database`, `sql` (one statement), `reason` (required) | Rows, a pending approval request, or a denial (below) |
 | `explain_policy` | `database`, `sql` | What `execute_sql` would decide, without executing: decision (`allow` / `approve` / `deny`), stage, rule, reason and hint, risk, approval rule, steps and approvers, affected-row limit, referenced columns with class and usage, and how each output column would be returned |
-| `get_request` | `request_id` | The approval request: status, approval progress and, once executed, `rows_affected` and masked `RETURNING` rows |
+| `get_request` | `request_id` | The approval request: status, approval progress and, once executed, `rows_affected`, masked `RETURNING` rows and, with [backups](./approvals#backups-and-restore), `backup.restore_sql` |
 
 `get_request` is registered only when approvals are enabled. Without approvals, `execute_sql` is annotated read-only; with approvals it is annotated as possibly destructive, since an approved write may follow.
 

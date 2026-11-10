@@ -192,6 +192,9 @@ type Database struct {
 	DefaultClass *DefaultClass     `yaml:"default_class"`
 	// Docs is curated knowledge about the schema (see docs.go).
 	Docs DatabaseDocs `yaml:"docs"`
+	// Backup saves the rows that approved UPDATE and DELETE statements
+	// change, so the change can be undone (PostgreSQL only).
+	Backup *Backup `yaml:"backup"`
 }
 
 type Endpoint struct {
@@ -539,6 +542,9 @@ func (c *Config) validate() error {
 			validateDefaultClass(db.DefaultClass, p+".default_class", add)
 		}
 		db.Docs.validate(p+".docs", add)
+		if db.Backup != nil {
+			db.Backup.validate(&db, p+".backup", add)
+		}
 	}
 
 	groupNames := map[string]bool{}
