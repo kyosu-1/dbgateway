@@ -17,11 +17,13 @@ AI agents connect over [MCP](https://modelcontextprotocol.io) with OAuth; people
 - **Policy as code** — groups, five roles, data classes and CEL rules in one YAML file. Default deny, shadow mode and `dbgw policy test` for CI.
 - **Migration lint** — `dbgw lint` checks the migrations you review in pull requests for long locks, table rewrites and destructive changes, offline, with GitHub annotations.
 - **Human approval for writes** — risk levels, multi-step approval rules, passkey or IdP step-up, statement pinning, re-evaluation before execution and affected-row limits.
+- **Undo for writes** — the rows an approved `UPDATE` or `DELETE` changes are backed up in the same transaction, with a restore statement that goes through approval (PostgreSQL).
 - **Masking by lineage** — through views, CTEs, expressions and `SELECT *`; `no_ai` columns never reach an agent; optional value-based PII detection.
-- **Agents act for a person** — OAuth 2.1 with consent and short-lived agent tokens; an agent never has more rights than its person.
+- **Agents act for a person** — OAuth 2.1 with consent and short-lived agent tokens; an agent never has more rights than its person. Quotas cap queries and rows per person; row-level security can see who a request is for.
+- **Schema knowledge for agents** — table and column descriptions and example queries kept in the configuration, returned with the schema.
 - **Web UI** (English and Japanese) — SQL editor with completion, history and audited export; approvals, requests, audit log and users.
 - **Tamper-evident audit log** — hash chain, `dbgw audit verify`, fail closed; files, PostgreSQL or OpenTelemetry.
-- **Built for production** — IAM database authentication on AWS and Google Cloud, read replicas, multi-instance mode, Slack and webhook notifications, SCIM.
+- **Built for production** — IAM database authentication on AWS and Google Cloud, read replicas, multi-instance mode, Prometheus metrics, Slack and webhook notifications, SCIM.
 
 ## Quickstart
 
