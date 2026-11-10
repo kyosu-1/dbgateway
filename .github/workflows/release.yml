@@ -54,7 +54,7 @@ jobs:
           subject-path: ${{ env.ARCHIVE }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ env.ARCHIVE }}
 
   image:
@@ -84,6 +84,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
         uses: docker/build-push-action@v6
+        env:
+          # The build record artifact would be picked up by the publish
+          # job's download; it is not needed.
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -111,6 +115,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: binary-*
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum *.tar.gz > checksums.txt
