@@ -4,12 +4,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 
 - Prometheus metrics on a separate, optional listener (`server.metrics_listen`, `GET /metrics`): requests by database, principal kind, decision and stage, request durations, rows returned, approval state changes, audit write and forwarding failures, notification deliveries, catalog loads, connection pools, and Go runtime and process metrics. Labels never contain identities, SQL or table names.
 - Schema docs (`databases[].docs`): database, table and column descriptions and example queries kept in the configuration, returned by `list_databases` and `search_objects` (MCP and API), `dbgw dbs` / `dbgw search` and the SQL editor's schema list, alongside database comments. Examples are attached to the tables they reference using the SQL analyzer.
 - Backups of approved writes (PostgreSQL, `databases[].backup`): the rows an `UPDATE` or `DELETE` changes are copied into a table in the database, in the same transaction, and the request offers a restore statement that goes through approval like any other write.
 - `dbgw lint`: offline review of SQL migration files with the PostgreSQL and MySQL parsers. 20 PostgreSQL rules (locks, table rewrites, unsafe constraints, destructive and breaking changes, type conventions) and 8 MySQL rules; text, JSON and GitHub Actions annotation output; YAML configuration and `-- dbgw-lint-ignore` comments.
+
+### Changed
+
+- The quickstart uses the release binary: `make download` fetches and verifies `bin/dbgw`, and `make serve-dev` runs it; building needs Go with cgo only on other platforms.
 
 ## [0.1.0] - 2026-11-11
 
@@ -29,5 +35,6 @@ First public release.
 - IAM database authentication for Amazon RDS and Cloud SQL, read replicas, multi-instance mode with PostgreSQL.
 - Terraform examples for ECS Fargate and Cloud Run.
 
-[Unreleased]: https://github.com/kyosu-1/dbgateway/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kyosu-1/dbgateway/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kyosu-1/dbgateway/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyosu-1/dbgateway/releases/tag/v0.1.0
