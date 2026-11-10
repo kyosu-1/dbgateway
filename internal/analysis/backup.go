@@ -1,6 +1,9 @@
 package analysis
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // BackupPlan describes how to copy the rows an UPDATE or DELETE is about to
 // change, so that the change can be undone later. Adapters that support
@@ -60,6 +63,15 @@ type BackupRecord struct {
 	Source     string `json:"source"`
 	Kind       string `json:"kind"`
 	RestoreSQL string `json:"restore_sql,omitempty"`
+	// CreatedAt is when the backup was taken (backups.retention).
+	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// BackupTable is a backup table found in the backup schema; Record is nil
+// when its comment is not a backup record.
+type BackupTable struct {
+	Table  string
+	Record *BackupRecord
 }
 
 // BackupError is returned by Execute when the backup could not be taken

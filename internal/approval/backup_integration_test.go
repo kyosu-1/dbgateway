@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -219,5 +220,35 @@ func TestBackupRequired(t *testing.T) {
 	rr := h.submitAndApprove(t, agent, r.Result.Backup.RestoreSQL)
 	if rr.Status != approval.StatusSucceeded || plans(t, su)[6] != "free" {
 		t.Fatalf("restore: %+v %+v", rr, rr.Result)
+	}
+}
+
+func TestBackupRetention(t *testing.T) {
+	su := prepare(t)
+	prepareBackup(t, su)
+	ctx := context.Background()
+	if _, err := su.Exec(ctx, "CREATE TABLE "+backupSchema+".not_a_backup (id int)"); err != nil {
+		t.Fatal(err)
+	}
+	h := setupWith(t, "    backup: { schema: "+backupSchema+", retention: 24h }\n")
+	r := h.submitAndApprove(t, agent, "UPDATE "+table+" SET plan = 'pro' WHERE id = 12")
+	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.Table == "" {
+		t.Fatalf("update: %+v %+v", r, r.Result)
+	}
+	exists := func(name string) bool {
+		var ok bool
+		if err := su.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", backupSchema+"."+name).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if n := h.gw.ExpireBackups(ctx, time.Now().Add(23*time.Hour)); n != 0 || !exists(r.ID) {
+		t.Fatalf("dropped %d before the retention passed", n)
+	}
+	if n := h.gw.ExpireBackups(ctx, time.Now().Add(25*time.Hour)); n != 1 || exists(r.ID) {
+		t.Fatalf("dropped %d after the retention passed", n)
+	}
+	if !exists("not_a_backup") {
+		t.Fatal("a table without a backup record was dropped")
 	}
 }

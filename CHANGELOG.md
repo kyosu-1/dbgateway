@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- `backup.retention`: backup tables older than the retention are dropped hourly, with an audit entry (`backup_expired`) for each.
 - `databases[].session_identity` (PostgreSQL): every transaction carries the requester as `dbgateway.user`, `dbgateway.kind`, `dbgateway.agent`, `dbgateway.groups` and `dbgateway.request_id` settings, so row-level security policies and triggers can tell who a request is for.
 - Quotas (`quotas`): limits on the queries and rows one person, together with all their agents, may get per minute, hour or day, selected by CEL conditions. A used-up quota denies reads with rule `quota:<name>` and a hint saying when it frees up, a read never returns more rows than the quota has left, and `explain_policy` reports a quota that would deny. Usage is kept in the management database, so it is shared by all instances with the PostgreSQL store; store errors fail closed. Shadow mode records quota denials instead of enforcing them.
 

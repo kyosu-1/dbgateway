@@ -52,6 +52,7 @@ type Server struct {
 	notifier  *notify.Dispatcher // nil when no notifications are configured
 	anomaly   *notify.Anomaly    // nil when no notifications are configured
 	metrics   *metrics.Metrics   // nil unless server.metrics_listen is set
+	gw        *gateway.Gateway
 }
 
 // New builds the server from a validated configuration.
@@ -134,6 +135,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 	if err != nil {
 		return nil, err
 	}
+	s.gw = gw
 	s.closers = append(s.closers, gw.Close)
 	if s.metrics != nil {
 		s.metrics.WatchPools(gw.PoolStats)
@@ -319,6 +321,7 @@ func (s *Server) startBackground(ctx context.Context) {
 	if s.notifier != nil {
 		go func() { _ = s.notifier.Run(ctx) }() // Slack Socket Mode (outbound only)
 	}
+	go s.gw.RunBackupRetention(ctx, time.Hour) // backup.retention
 }
 
 // RunBackground runs only the background loops (approval execution and
