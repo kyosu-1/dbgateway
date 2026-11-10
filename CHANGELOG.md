@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - `databases[].session_identity` (PostgreSQL): every transaction carries the requester as `dbgateway.user`, `dbgateway.kind`, `dbgateway.agent`, `dbgateway.groups` and `dbgateway.request_id` settings, so row-level security policies and triggers can tell who a request is for.
+- Quotas (`quotas`): limits on the queries and rows one person, together with all their agents, may get per minute, hour or day, selected by CEL conditions. A used-up quota denies reads with rule `quota:<name>` and a hint saying when it frees up, a read never returns more rows than the quota has left, and `explain_policy` reports a quota that would deny. Usage is kept in the management database, so it is shared by all instances with the PostgreSQL store; store errors fail closed. Shadow mode records quota denials instead of enforcing them.
 
 ## [0.2.0] - 2026-11-11
 
@@ -15,7 +16,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Prometheus metrics on a separate, optional listener (`server.metrics_listen`, `GET /metrics`): requests by database, principal kind, decision and stage, request durations, rows returned, approval state changes, audit write and forwarding failures, notification deliveries, catalog loads, connection pools, and Go runtime and process metrics. Labels never contain identities, SQL or table names.
 - Schema docs (`databases[].docs`): database, table and column descriptions and example queries kept in the configuration, returned by `list_databases` and `search_objects` (MCP and API), `dbgw dbs` / `dbgw search` and the SQL editor's schema list, alongside database comments. Examples are attached to the tables they reference using the SQL analyzer.
 - Backups of approved writes (PostgreSQL, `databases[].backup`): the rows an `UPDATE` or `DELETE` changes are copied into a table in the database, in the same transaction, and the request offers a restore statement that goes through approval like any other write.
-- Quotas (`quotas`): limits on the queries and rows one person, together with all their agents, may get per minute, hour or day, selected by CEL conditions. A used-up quota denies reads with rule `quota:<name>` and a hint saying when it frees up, a read never returns more rows than the quota has left, and `explain_policy` reports a quota that would deny. Usage is kept in the management database, so it is shared by all instances with the PostgreSQL store; store errors fail closed. Shadow mode records quota denials instead of enforcing them.
 - `dbgw lint`: offline review of SQL migration files with the PostgreSQL and MySQL parsers. 20 PostgreSQL rules (locks, table rewrites, unsafe constraints, destructive and breaking changes, type conventions) and 8 MySQL rules; text, JSON and GitHub Actions annotation output; YAML configuration and `-- dbgw-lint-ignore` comments.
 
 ### Changed
