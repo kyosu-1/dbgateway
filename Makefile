@@ -6,12 +6,18 @@ LDFLAGS   := -s -w -X main.version=$(VERSION)
 DEV_CFG   := examples/dev/dbgateway.yaml
 COMPOSE   := docker compose -f examples/dev/compose.yaml
 
-.PHONY: all build test test-race test-integration lint generate policy-test dev-db dev-db-down run-dev
+.PHONY: all build download serve-dev test test-race test-integration lint generate policy-test dev-db dev-db-down run-dev
 
 all: lint test build
 
 build: ## Build the dbgw binary (cgo is required by the PostgreSQL parser)
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/dbgw
+
+download: ## Download bin/dbgw from the latest release instead of building it
+	sh scripts/download.sh
+
+bin/dbgw:
+	$(MAKE) build
 
 test: ## Unit tests
 	$(GO) test ./...
@@ -39,5 +45,7 @@ dev-db: ## Start the local PostgreSQL
 dev-db-down: ## Stop the local PostgreSQL and delete its data
 	$(COMPOSE) down -v
 
-run-dev: build dev-db ## Run dbgateway locally with the dev configuration
+run-dev: build serve-dev ## Build, then run dbgateway locally with the dev configuration
+
+serve-dev: bin/dbgw dev-db ## Run the existing bin/dbgw (e.g. from `make download`) with the dev configuration
 	DBGW_DEV_READER_PASSWORD=reader DBGW_DEV_WRITER_PASSWORD=writer $(BIN) serve --config $(DEV_CFG) --log-level debug

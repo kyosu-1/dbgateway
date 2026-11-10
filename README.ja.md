@@ -21,11 +21,12 @@ AIエージェントは [MCP](https://modelcontextprotocol.io)（OAuth）で、�
 
 ## クイックスタート
 
-Go（cgo が使えること）と Docker が必要です。
+Docker と、リリースのバイナリが使える Linux または macOS（Apple シリコン）が必要です。それ以外の環境では Go（cgo が使えること）でビルドします（`make run-dev`）。
 
 ```sh
-git clone https://github.com/kyosu-1/dbgateway.git && cd dbgateway
-make run-dev          # サンプルの PostgreSQL と dbgateway を起動（http://127.0.0.1:8443）
+git clone --depth 1 https://github.com/kyosu-1/dbgateway.git && cd dbgateway
+make download         # 最新リリースの bin/dbgw を取得
+make serve-dev        # サンプルの PostgreSQL と dbgateway を起動（http://127.0.0.1:8443）
 claude mcp add --transport http dbgateway http://127.0.0.1:8443/mcp
 ```
 
