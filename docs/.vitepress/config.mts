@@ -55,6 +55,7 @@ export default withMermaid(defineConfig({
           { text: "Connect AI agents (MCP)", link: "/mcp" },
           { text: "SQL editor", link: "/console" },
           { text: "CLI", link: "/cli" },
+          { text: "Migration lint", link: "/lint" },
           { text: "Approvals", link: "/approvals" },
           { text: "Notifications", link: "/notifications" },
         ],

@@ -32,7 +32,7 @@ Roles, data classes, policies and approval rules live in one YAML file kept in G
 
 ## No DDL, no client proxy
 
-Schema changes are refused; they belong in migrations reviewed and applied by your existing tooling. People run SQL in the web [SQL editor](./console) and the [CLI](./cli). There is no wire-protocol endpoint for desktop clients, because results saved or exported there would be outside dbgateway's control and audit.
+Schema changes are refused; they belong in migrations reviewed and applied by your existing tooling. `dbgw lint` checks those migrations in CI with the same parsers (see [Migration lint](./lint)). People run SQL in the web [SQL editor](./console) and the [CLI](./cli). There is no wire-protocol endpoint for desktop clients, because results saved or exported there would be outside dbgateway's control and audit.
 
 ## The database stays the last line of defense
 

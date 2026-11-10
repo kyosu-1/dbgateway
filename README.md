@@ -15,6 +15,7 @@ AI agents connect over [MCP](https://modelcontextprotocol.io) with OAuth; people
 
 - **Understands SQL** — pg_query for PostgreSQL and the TiDB parser for MySQL. Multiple statements, transaction control, side-effect functions and anything that cannot be fully analyzed are refused.
 - **Policy as code** — groups, five roles, data classes and CEL rules in one YAML file. Default deny, shadow mode and `dbgw policy test` for CI.
+- **Migration lint** — `dbgw lint` checks the migrations you review in pull requests for long locks, table rewrites and destructive changes, offline, with GitHub annotations.
 - **Human approval for writes** — risk levels, multi-step approval rules, passkey or IdP step-up, statement pinning, re-evaluation before execution and affected-row limits.
 - **Masking by lineage** — through views, CTEs, expressions and `SELECT *`; `no_ai` columns never reach an agent; optional value-based PII detection.
 - **Agents act for a person** — OAuth 2.1 with consent and short-lived agent tokens; an agent never has more rights than its person.

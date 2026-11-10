@@ -44,6 +44,7 @@ flowchart LR
 | Agents | MCP tools `list_databases`, `search_objects`, `execute_sql`, `get_request`, `explain_policy`; OAuth 2.1 with consent; short-lived agent tokens |
 | People | Web SQL editor with completion, history, saved queries and audited export; CLI (`dbgw query`); approval, request and audit screens in English and Japanese |
 | Policy | Five roles, groups (static, OIDC or SCIM), CEL rules, shadow mode, `dbgw policy test` |
+| Migrations | `dbgw lint`: offline checks of migration files for long locks, table rewrites and destructive changes, for CI ([Migration lint](./lint)) |
 | Approvals | Risk levels, multi-step approval rules, passkey or IdP step-up, affected-row limits, time-limited roles, break-glass elevation |
 | Data protection | Column masking by lineage, `no_ai` columns, value-based PII detection |
 | Operations | Slack and webhook notifications, OpenTelemetry export, IAM database authentication on AWS and Google Cloud, multi-instance mode with PostgreSQL |
