@@ -18,8 +18,9 @@ esac
 
 tag=${1:-}
 if [ -z "$tag" ]; then
-	tag=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
-		sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+	# The newest release, including pre-releases (every 0.x release is one).
+	tag=$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=1" |
+		sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
 fi
 [ -n "$tag" ] || { echo "download: no release found" >&2; exit 1; }
 

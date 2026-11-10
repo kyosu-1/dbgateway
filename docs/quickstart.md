@@ -9,7 +9,7 @@ Run dbgateway on your machine against a sample PostgreSQL database, then query i
 
 ## 1. Start dbgateway
 
-Get the repository (for the sample database and configuration) and the `dbgw` binary from the [latest release](https://github.com/kyosu-1/dbgateway/releases/latest):
+Get the repository (for the sample database and configuration) and the `dbgw` binary from the [latest release](https://github.com/kyosu-1/dbgateway/releases):
 
 ```sh
 git clone --depth 1 https://github.com/kyosu-1/dbgateway.git

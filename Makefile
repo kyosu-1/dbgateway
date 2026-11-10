@@ -13,7 +13,7 @@ all: lint test build
 build: ## Build the dbgw binary (cgo is required by the PostgreSQL parser)
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/dbgw
 
-download: ## Download bin/dbgw from the latest release instead of building it
+download: ## Download bin/dbgw from the newest release instead of building it
 	sh scripts/download.sh
 
 bin/dbgw:
