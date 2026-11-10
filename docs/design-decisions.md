@@ -44,7 +44,7 @@ One Go binary with SQLite by default; PostgreSQL for multiple instances. MCP use
 
 ## Known limitations
 
-- Risk is assessed per statement; attacks split across many statements or sessions are not detected (anomaly notifications help).
+- Policies and risk are assessed per statement. [Quotas](./quotas) cap how many queries and rows a person (with all their agents) gets over time, and anomaly notifications flag bursts, but a split attack that stays within the quotas — or combines harmless-looking results outside dbgateway — is not detected.
 - The person's identity reaches the database only as transaction settings (`session_identity`, PostgreSQL), not as a database role; MySQL databases do not receive it.
 - Pending writes are returned as `status: pending` with `get_request` for polling; the MCP Tasks extension is not used yet.
 - PostgreSQL syntax follows PostgreSQL 17.

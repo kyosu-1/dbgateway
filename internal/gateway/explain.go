@@ -122,6 +122,24 @@ func (g *Gateway) ExplainPolicy(ctx context.Context, p *identity.Principal, req 
 			resp.Decision, resp.Rule, resp.Reason, resp.Hint = config.ActionDeny, ruleUntraceable, msgUntraceable, hintUntraceable
 		}
 	}
+	if resp.Decision == config.ActionAllow {
+		// A used-up quota would deny the read now.
+		qc, err := g.checkQuotas(ctx, p, ev.Quotas)
+		if err != nil {
+			return nil, err
+		}
+		if qc != nil && qc.exceeded != nil {
+			ex := qc.exceeded
+			if g.cfg.Server.Mode == config.ModeShadow {
+				if resp.ShadowDeniedBy == "" {
+					resp.ShadowDeniedBy = ruleQuota(ex.quota)
+				}
+			} else {
+				resp.Decision, resp.Stage, resp.Rule = config.ActionDeny, string(analysis.StagePolicy), ruleQuota(ex.quota)
+				resp.Reason, resp.Hint = ex.denial(g.now())
+			}
+		}
+	}
 	if ev.NeedsApproval() && resp.Decision == config.ActionApprove {
 		rule := dec.ApprovalRule
 		resp.ApprovalRule, resp.ApprovalSteps, resp.ExpireAfter = rule.Name, slices.Clone(rule.Steps), rule.ExpireAfter.String()

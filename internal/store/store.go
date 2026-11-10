@@ -205,12 +205,14 @@ type Store interface {
 	RevokeFamily(ctx context.Context, familyID string, now time.Time) (int64, error)
 
 	// DeleteExpired removes sessions, codes, tokens, passkey enrollment
-	// links and WebAuthn ceremonies that expired before the given time. It returns the number of rows removed.
+	// links, WebAuthn ceremonies, console history and quota usage that
+	// expired before the given time. It returns the number of rows removed.
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 
 	ApprovalStore
 	WebStore
 	ConsoleStore
+	QuotaStore
 
 	Close() error
 }

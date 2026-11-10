@@ -71,6 +71,8 @@ func Run(t *testing.T, h Harness) {
 		{"InstancesSlackCodeOnce", testInstancesSlackCodeOnce},
 		{"ConsoleHistory", testConsoleHistory},
 		{"SavedQueries", testSavedQueries},
+		{"QuotaUsage", testQuotaUsage},
+		{"InstancesQuotaUsage", testInstancesQuotaUsage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { tt.fn(t, h) })
@@ -991,5 +993,97 @@ func testSavedQueries(t *testing.T, h Harness) {
 	}
 	if err := save("over", "taro@example.com", "over"); !errors.Is(err, store.ErrLimit) {
 		t.Fatalf("over the limit: %v", err)
+	}
+}
+
+func testQuotaUsage(t *testing.T, h Harness) {
+	ctx := context.Background()
+	st := h.Open(t)
+	now := time.Date(2026, 11, 11, 10, 30, 42, 0, time.UTC)
+	min0 := now.Truncate(time.Minute)
+	add := func(requester, quota string, at time.Time, queries, rows int64, ttl time.Duration) {
+		t.Helper()
+		b := store.QuotaBucket(at)
+		must(t, st.AddQuotaUsage(ctx, []store.QuotaUsage{{Requester: requester, Quota: quota, Bucket: at, Queries: queries, Rows: rows, ExpiresAt: b.Add(ttl)}}))
+	}
+	if list, err := st.ListQuotaUsage(ctx, "a", []string{"q1"}, now.Add(-time.Hour)); err != nil || len(list) != 0 {
+		t.Fatalf("empty = %+v, %v", list, err)
+	}
+	if list, err := st.ListQuotaUsage(ctx, "a", nil, now.Add(-time.Hour)); err != nil || len(list) != 0 {
+		t.Fatalf("no quotas = %+v, %v", list, err)
+	}
+	must(t, st.AddQuotaUsage(ctx, nil))
+
+	add("a", "q1", now, 1, 10, time.Hour)
+	add("a", "q1", now.Add(5*time.Second), 1, 5, time.Hour) // same minute
+	add("a", "q1", now.Add(-10*time.Minute), 2, 7, time.Hour)
+	add("a", "q1", now.Add(-2*time.Hour), 1, 1, time.Hour) // before since
+	add("a", "q2", now, 1, 3, 24*time.Hour)
+	add("b", "q1", now, 1, 100, time.Hour)
+	// One statement for several quotas; the longer expiry wins.
+	must(t, st.AddQuotaUsage(ctx, []store.QuotaUsage{
+		{Requester: "a", Quota: "q2", Bucket: now, Queries: 1, Rows: 1, ExpiresAt: min0.Add(time.Hour)},
+		{Requester: "a", Quota: "q3", Bucket: now, Queries: 1, Rows: 2, ExpiresAt: min0.Add(time.Hour)},
+	}))
+
+	list, err := st.ListQuotaUsage(ctx, "a", []string{"q1", "q2"}, now.Add(-time.Hour))
+	must(t, err)
+	want := []store.QuotaUsage{
+		{Requester: "a", Quota: "q1", Bucket: min0.Add(-10 * time.Minute), Queries: 2, Rows: 7, ExpiresAt: min0.Add(50 * time.Minute)},
+		{Requester: "a", Quota: "q1", Bucket: min0, Queries: 2, Rows: 15, ExpiresAt: min0.Add(time.Hour)},
+		{Requester: "a", Quota: "q2", Bucket: min0, Queries: 2, Rows: 4, ExpiresAt: min0.Add(24 * time.Hour)},
+	}
+	if len(list) != len(want) {
+		t.Fatalf("list = %+v", list)
+	}
+	for i := range want {
+		g, w := list[i], want[i]
+		if g.Requester != w.Requester || g.Quota != w.Quota || !g.Bucket.Equal(w.Bucket) || g.Queries != w.Queries || g.Rows != w.Rows ||
+			!g.ExpiresAt.Equal(w.ExpiresAt) || g.Bucket.Location() != time.UTC {
+			t.Errorf("list[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+
+	// DeleteExpired removes buckets no window needs any more.
+	if _, err := st.DeleteExpired(ctx, min0.Add(time.Hour+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	list, err = st.ListQuotaUsage(ctx, "a", []string{"q1", "q2", "q3"}, now.Add(-3*time.Hour))
+	must(t, err)
+	if len(list) != 1 || list[0].Quota != "q2" {
+		t.Fatalf("after DeleteExpired: %+v", list)
+	}
+}
+
+// Instances sharing the store add to the same buckets without losing
+// updates.
+func testInstancesQuotaUsage(t *testing.T, h Harness) {
+	ctx := context.Background()
+	sts := h.OpenInstances(t, 4)
+	now := time.Now()
+	const perInstance = 25
+	var wg sync.WaitGroup
+	errs := make(chan error, len(sts)*perInstance)
+	for _, st := range sts {
+		wg.Go(func() {
+			for range perInstance {
+				// Two quotas per statement, in both orders.
+				errs <- st.AddQuotaUsage(ctx, []store.QuotaUsage{
+					{Requester: "a", Quota: "q2", Bucket: now, Queries: 1, Rows: 2, ExpiresAt: now.Add(time.Hour)},
+					{Requester: "a", Quota: "q1", Bucket: now, Queries: 1, Rows: 3, ExpiresAt: now.Add(time.Hour)},
+				})
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		must(t, err)
+	}
+	list, err := sts[0].ListQuotaUsage(ctx, "a", []string{"q1", "q2"}, now.Add(-time.Minute))
+	must(t, err)
+	n := int64(len(sts) * perInstance)
+	if len(list) != 2 || list[0].Queries != n || list[0].Rows != 3*n || list[1].Queries != n || list[1].Rows != 2*n {
+		t.Fatalf("list = %+v", list)
 	}
 }

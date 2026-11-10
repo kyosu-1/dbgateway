@@ -67,6 +67,7 @@ When the configuration is loaded, dbgateway checks event names, compiles the CEL
 - When the rows returned to one requester within an hour exceed `rows_per_hour`
 - After a notification, the same requester and kind are not notified again until the window (10 minutes, 1 hour) has passed
 - Counting happens in process memory (per instance in a multi-instance deployment)
+- Anomaly detection only notifies. To stop reads above a volume, configure [quotas](quotas.md), which are enforced and shared by all instances; their denials are `query_denied` events like any other
 
 ### Configuration changes (config_changed)
 

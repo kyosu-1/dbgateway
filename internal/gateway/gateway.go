@@ -23,6 +23,7 @@ import (
 	"github.com/kyosu-1/dbgateway/internal/events"
 	"github.com/kyosu-1/dbgateway/internal/identity"
 	"github.com/kyosu-1/dbgateway/internal/mask"
+	"github.com/kyosu-1/dbgateway/internal/store"
 )
 
 // DataNotice wraps every result: results are data, not instructions.
@@ -45,6 +46,11 @@ type Options struct {
 	// Observer, when set, receives request and catalog measurements
 	// (metrics). It must not block.
 	Observer Observer
+	// QuotaStore counts quota usage (the management store). Required when
+	// the configuration has quotas.
+	QuotaStore store.QuotaStore
+	// Now returns the current time (quota windows). Nil means time.Now.
+	Now func() time.Time
 }
 
 // Gateway serves requests for all configured databases.
@@ -61,6 +67,9 @@ type Gateway struct {
 	// observer receives measurements for metrics; may be nil.
 	observer Observer
 	dbs      map[string]*database
+	// quotaStore counts quota usage; nil when no quotas are configured.
+	quotaStore store.QuotaStore
+	now        func() time.Time
 
 	// approvals handles writes that need approval; nil until SetApprovals.
 	approvals Approvals
@@ -97,8 +106,16 @@ func New(opts Options) (*Gateway, error) {
 	if pub == nil {
 		pub = events.Nop{}
 	}
+	if len(opts.Config.Quotas) > 0 && opts.QuotaStore == nil {
+		return nil, errors.New("quotas are configured, but no quota store was given")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	g := &Gateway{Evaluator: ev, cfg: opts.Config, audit: opts.Audit, masker: mask.NewMasker(opts.Config), pii: mask.NewPIIDetector(opts.Config.PIIDetection), logger: logger,
-		events: pub, rowsObserver: opts.RowsObserver, observer: opts.Observer, dbs: map[string]*database{}}
+		events: pub, rowsObserver: opts.RowsObserver, observer: opts.Observer, dbs: map[string]*database{},
+		quotaStore: opts.QuotaStore, now: now}
 	for i := range opts.Config.Databases {
 		db := &opts.Config.Databases[i]
 		ad, ok := opts.Adapters[db.Type]
@@ -574,20 +591,54 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 		return denied(analysis.StagePolicy, ruleUntraceable, msgUntraceable, hintUntraceable)
 	}
 
+	// Quotas: deny when a limit is used up, and never return more rows
+	// than the row limits still allow (see quota.go).
+	qc, err := g.checkQuotas(ctx, p, ev.Quotas)
+	if err != nil {
+		return failed(err.Error(), "")
+	}
+	shadow := g.cfg.Server.Mode == config.ModeShadow
+	quotaCapped := false
+	if qc != nil {
+		if ex := qc.exceeded; ex != nil {
+			if entry.Extra == nil {
+				entry.Extra = map[string]any{}
+			}
+			entry.Extra["quota_limit"], entry.Extra["quota_used"], entry.Extra["quota_max"] = ex.limit.Key, ex.used, ex.limit.Max
+			if !shadow {
+				reason, hint := ex.denial(g.now())
+				return denied(analysis.StagePolicy, ruleQuota(ex.quota), reason, hint)
+			}
+			if entry.ShadowDeniedBy == "" {
+				entry.ShadowDeniedBy = ruleQuota(ex.quota)
+			}
+		} else if !shadow && qc.rowsLeft >= 0 && (opts.MaxRows <= 0 || qc.rowsLeft < int64(opts.MaxRows)) {
+			opts.MaxRows, quotaCapped = int(qc.rowsLeft), true
+		}
+	}
+
 	res, err := d.adapter.Execute(ctx, conn, req.SQL, opts)
 	if err != nil {
+		// The statement reached the database: it counts as a query.
+		_ = g.recordQuotas(ctx, qc, 0)
 		msg, code := describeDBError(err)
 		return failed(msg, code)
 	}
 	if len(res.Columns) != len(plans) {
+		_ = g.recordQuotas(ctx, qc, 0)
 		return failed(msgColumnMismatch, "")
 	}
 
 	cols, rows, maskedCols, err := g.applyMasking(p.Kind, plans, res)
 	if err != nil {
+		_ = g.recordQuotas(ctx, qc, 0)
 		entry.Decision = config.ActionDeny
 		return denied(analysis.StagePolicy, rulePIIDetected, err.Error(),
 			"Rewrite the query so the result leaves out columns with personal data, or ask an administrator to classify the column (data_classes).")
+	}
+	if err := g.recordQuotas(ctx, qc, res.RowCount); err != nil {
+		// Fail closed: a result that was not counted is not returned.
+		return failed(err.Error(), "")
 	}
 	resp.Status, resp.Notice = StatusOK, DataNotice
 	resp.Columns, resp.Rows = cols, rows
@@ -601,6 +652,10 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 	}
 	if res.Truncated {
 		resp.Hint = fmt.Sprintf("The row or size limit was reached, so only the first %d rows were returned. Narrow the conditions or aggregate, then run it again.", res.RowCount)
+		if quotaCapped && res.RowCount >= opts.MaxRows {
+			resp.Hint = fmt.Sprintf("Only the first %d rows were returned because quota %q allows only %d more rows (%s). Narrow the conditions or aggregate.",
+				res.RowCount, qc.rowsQuota.Name, qc.rowsLeft, qc.rowsLimit.Key)
+		}
 	}
 	entry.Result = &audit.ResultInfo{Rows: res.RowCount, Bytes: res.Bytes, DurationMS: res.Duration.Milliseconds(),
 		Truncated: res.Truncated, MaskedColumns: maskedCols}

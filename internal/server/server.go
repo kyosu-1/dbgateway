@@ -117,9 +117,10 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Server,
 			"postgres": postgres.New(cfg.SQL.AllowedFunctions),
 			"mysql":    mysql.New(cfg.SQL.AllowedFunctions),
 		},
-		Audit:  auditLog,
-		Logger: logger,
-		Events: pub,
+		Audit:      auditLog,
+		Logger:     logger,
+		Events:     pub,
+		QuotaStore: st,
 		RowsObserver: func(p *events.Principal, db string, n int64) {
 			if s.anomaly != nil {
 				s.anomaly.ObserveRows(p, db, n)

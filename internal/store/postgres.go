@@ -144,7 +144,7 @@ func (s *Postgres) applyMigration(ctx context.Context, version int, name string)
 // DeleteExpired removes expired sessions, codes and tokens.
 func (s *Postgres) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	var total int64
-	for _, table := range []string{"sessions", "auth_codes", "device_codes", "tokens", "passkey_enrollments", "webauthn_sessions", "console_history"} {
+	for _, table := range []string{"sessions", "auth_codes", "device_codes", "tokens", "passkey_enrollments", "webauthn_sessions", "console_history", "quota_usage"} {
 		tag, err := s.pool.Exec(ctx, `DELETE FROM `+table+` WHERE expires_at < $1`, pgTime(before))
 		if err != nil {
 			return total, fmt.Errorf("store: delete expired %s: %w", table, err)

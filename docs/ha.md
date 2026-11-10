@@ -17,6 +17,7 @@ How to run dbgateway on multiple instances. The default management database (SQL
 - Sticky sessions are not needed. Any instance returns the same result (in-progress login state is in a cookie; sessions are in the management database).
 - An approved request runs exactly once across instances. Each instance's background loop looks for approved requests and tries to run them, but only the instance that moves the status from `approved` to `running` (wins the conditional update) runs it. If an instance stops mid-execution, another instance marks the request as failed with an unknown result after a timeout. It is never re-run.
 - Single use of authorization codes, device codes and refresh tokens is also enforced across instances with conditional updates.
+- [Quota](quotas.md) usage is counted in the management database, so a person's limits hold across all instances (anomaly detection, in contrast, counts per instance).
 
 ### 1.1 Configuration
 

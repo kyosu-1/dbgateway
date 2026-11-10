@@ -119,6 +119,8 @@ type Engine struct {
 	riskHigh      []cel.Program
 	riskMedium    []cel.Program
 	approvalRules []compiledApprovalRule
+
+	quotas []compiledQuota
 }
 
 // Built-in rule names (always enforced, also in shadow mode).
@@ -146,8 +148,15 @@ func newRiskEnv() (*cel.Env, error) {
 	return newEnvOpts()
 }
 
-func newEnvOpts(extra ...cel.EnvOption) (*cel.Env, error) {
-	opts := []cel.EnvOption{
+// newQuotaEnv is the environment of quota conditions: the variables known
+// before a statement runs, without `estimate` (EXPLAIN may not run) and
+// `risk` (writes only).
+func newQuotaEnv() (*cel.Env, error) {
+	return cel.NewEnv(baseEnvOpts()...)
+}
+
+func baseEnvOpts() []cel.EnvOption {
+	return []cel.EnvOption{
 		ext.NativeTypes(ext.ParseStructTags(true),
 			reflect.TypeFor[Principal](), reflect.TypeFor[Database](), reflect.TypeFor[Stmt](),
 			reflect.TypeFor[Table](), reflect.TypeFor[Column](), reflect.TypeFor[Estimate]()),
@@ -158,8 +167,11 @@ func newEnvOpts(extra ...cel.EnvOption) (*cel.Env, error) {
 		cel.Variable("database", cel.ObjectType("policy.Database")),
 		cel.Variable("stmt", cel.ObjectType("policy.Stmt")),
 		cel.Variable("columns", cel.ListType(cel.ObjectType("policy.Column"))),
-		cel.Variable("estimate", cel.ObjectType("policy.Estimate")),
 	}
+}
+
+func newEnvOpts(extra ...cel.EnvOption) (*cel.Env, error) {
+	opts := append(baseEnvOpts(), cel.Variable("estimate", cel.ObjectType("policy.Estimate")))
 	return cel.NewEnv(append(opts, extra...)...)
 }
 
@@ -190,6 +202,9 @@ func Compile(cfg *config.Config) (*Engine, error) {
 		e.rules = append(e.rules, compiledRule{rule: r, prg: prg})
 	}
 	if err := e.compileApprovals(env, cfg); err != nil {
+		errs = append(errs, err)
+	}
+	if err := e.compileQuotas(cfg); err != nil {
 		errs = append(errs, err)
 	}
 	if err := errors.Join(errs...); err != nil {
