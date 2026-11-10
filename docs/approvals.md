@@ -150,6 +150,7 @@ databases:
     backup:
       schema: dbgw_backup   # must exist; not in search_path
       required: false       # true: refuse writes that cannot be backed up
+      retention: 30d        # drop backups older than this (default: keep)
 ```
 
 ```sql
@@ -173,7 +174,7 @@ The restore statement is an ordinary write: open it in the SQL editor from the r
 
 **Limits.** The backup covers the rows of the target table only: rows changed by `ON DELETE CASCADE` or `SET NULL` foreign keys and by triggers are not saved, and a restore does not undo them. If the backup cannot be taken (for example, the write user lacks `SELECT` on the table or `CREATE` on the schema, or the table has a column named `_dbgw_tableoid` or `_dbgw_ctid`), the write fails, even with `required: false`. So does a write a `BEFORE` trigger skips rows of (the backup then holds more rows than the write changed). A concurrent change to one of the rows makes the write fail with a serialization error instead of diverging from its backup; submit it again.
 
-**Retention.** A backup is at most the affected-rows limit of the request. dbgateway does not delete backup tables; drop old ones with your usual maintenance (each table's comment has the request ID and creation is in the audit log). Backups are copies of personal data: include the schema in your retention and erasure procedures.
+**Retention.** A backup is at most the affected-rows limit of the request. With `retention` (for example `retention: 30d`), dbgateway drops backup tables older than that, checking every hour; each drop is written to the audit log as event `backup_expired`. Only tables whose comment is a dbgateway backup record with a creation time are dropped. Without `retention`, backups are kept; drop them with your usual maintenance (each table's comment has the request ID and creation time). Backups are copies of personal data: include the schema in your retention and erasure procedures.
 
 ## Time-limited roles (JIT)
 

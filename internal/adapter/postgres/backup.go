@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	pg "github.com/pganalyze/pg_query_go/v6"
@@ -194,7 +195,8 @@ func finishBackup(ctx context.Context, tx pgx.Tx, b *analysis.BackupSpec, saved 
 	if err != nil {
 		return nil, err
 	}
-	rec, _ := json.Marshal(analysis.BackupRecord{RequestID: b.RequestID, Source: b.Plan.Target.FQN(), Kind: string(b.Plan.Kind), RestoreSQL: restore})
+	rec, _ := json.Marshal(analysis.BackupRecord{RequestID: b.RequestID, Source: b.Plan.Target.FQN(), Kind: string(b.Plan.Kind),
+		RestoreSQL: restore, CreatedAt: time.Now().UTC().Truncate(time.Second)})
 	if _, err := tx.Exec(ctx, "COMMENT ON TABLE "+pgx.Identifier{b.Schema, b.Table}.Sanitize()+" IS "+quoteLiteral(string(rec))); err != nil {
 		return nil, &analysis.BackupError{Reason: "could not record the backup", Err: err}
 	}
@@ -346,4 +348,52 @@ func (a *Adapter) BackupRecord(ctx context.Context, ac analysis.Conn, schema, ta
 // safe whatever standard_conforming_strings is.
 func quoteLiteral(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+const listBackupsSQL = `
+SELECT c.relname, coalesce(obj_description(c.oid, 'pg_class'), '')
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relkind = 'r'
+ORDER BY c.relname`
+
+// ListBackups lists the tables of the backup schema with their records.
+func (a *Adapter) ListBackups(ctx context.Context, ac analysis.Conn, schema string) ([]analysis.BackupTable, error) {
+	c := ac.(*conn)
+	var out []analysis.BackupTable
+	err := c.withReadTx(ctx, analysis.ExecOptions{ReadOnly: true}, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, listBackupsSQL, schema)
+		if err != nil {
+			return err
+		}
+		out, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (analysis.BackupTable, error) {
+			var t analysis.BackupTable
+			var raw string
+			if err := r.Scan(&t.Table, &raw); err != nil {
+				return t, err
+			}
+			var rec analysis.BackupRecord
+			if json.Unmarshal([]byte(raw), &rec) == nil && rec.RequestID == t.Table {
+				t.Record = &rec
+			}
+			return t, nil
+		})
+		return err
+	})
+	return out, err
+}
+
+// DropBackup drops a backup table as the write user (its owner).
+func (a *Adapter) DropBackup(ctx context.Context, ac analysis.Conn, schema, table string) error {
+	c := ac.(*conn)
+	pool, err := c.writePool()
+	if err != nil {
+		return err
+	}
+	return c.withTx(ctx, pool, pgx.ReadWrite, analysis.ExecOptions{}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize()); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
 }
