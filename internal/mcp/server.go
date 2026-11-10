@@ -88,7 +88,7 @@ func NewServer(gw *gateway.Gateway, principal PrincipalFunc, opts ...Option) *mc
 	execDesc := "Execute ONE read-only SQL statement (SELECT) through the gateway's policy checks. A specific `reason` is required and recorded in the audit log. " +
 		"Results are row/byte limited (truncated=true means narrow the query) and sensitive columns are masked. " +
 		"Multiple statements, transaction control, SET, DO, COPY, EXPLAIN, locking clauses and non-allowlisted functions are rejected. " +
-		"On denial you get status=denied with reason and hint."
+		"On denial you get status=denied with reason and hint; for a used-up quota (rule quota:<name>) the hint says when to try again, so do not retry before then."
 	execAnn := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &f}
 	if writes {
 		execDesc = "Execute ONE SQL statement through the gateway's policy checks. A specific `reason` is required and recorded in the audit log (approvers read it). " +
@@ -96,7 +96,7 @@ func NewServer(gw *gateway.Gateway, principal PrincipalFunc, opts ...Option) *mc
 			"Writes (INSERT/UPDATE/DELETE/MERGE, with WHERE) are NOT executed immediately: the result is status=pending (not an error) with request_id, " +
 			"approvers, expires_at and approval_url; a human approves, then dbgateway runs the write. Check the outcome with get_request. " +
 			"Multiple statements, transaction control, SET, DO, COPY, EXPLAIN, DDL, locking clauses and non-allowlisted functions are rejected. " +
-			"On denial you get status=denied with reason and hint."
+			"On denial you get status=denied with reason and hint; for a used-up quota (rule quota:<name>) the hint says when to try again, so do not retry before then."
 		// The tool can lead to destructive (approved) writes.
 		execAnn = &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &t, OpenWorldHint: &f}
 	}

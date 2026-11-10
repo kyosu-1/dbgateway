@@ -49,6 +49,8 @@ type Evaluation struct {
 	Columns  []policy.Column
 	Estimate *analysis.Estimate
 	Decision policy.Decision
+	// Quotas are the quotas that apply to an allowed read (see quota.go).
+	Quotas []*config.Quota
 }
 
 // Allowed reports whether the statement may be executed.
@@ -146,6 +148,9 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 		in.Estimate = policy.Estimate{Rows: est.Rows, Cost: est.Cost}
 	}
 	ev.Decision = e.Engine.Evaluate(in)
+	if ev.Allowed() {
+		ev.Quotas = e.Engine.Quotas(in)
+	}
 	return ev
 }
 

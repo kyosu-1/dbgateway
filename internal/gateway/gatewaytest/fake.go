@@ -109,8 +109,11 @@ func (a *Adapter) Execute(_ context.Context, _ analysis.Conn, sql string, opt an
 			return nil, &analysis.AffectedRowsError{Affected: a.Affected, Max: opt.MaxAffectedRows}
 		}
 	}
+	res.TotalRows = int64(len(res.Rows))
+	if opt.MaxRows > 0 && len(res.Rows) > opt.MaxRows {
+		res.Rows, res.Truncated = res.Rows[:opt.MaxRows], true
+	}
 	res.RowCount = len(res.Rows)
-	res.TotalRows = int64(res.RowCount)
 	return &res, nil
 }
 

@@ -73,6 +73,9 @@ type Config struct {
 	Policies      []Rule                  `yaml:"policies"`
 	SCIM          SCIM                    `yaml:"scim"`
 	PIIDetection  PIIDetection            `yaml:"pii_detection"`
+	// Quotas limit how much each requester may read over time (see
+	// quotas.go).
+	Quotas []Quota `yaml:"quotas"`
 
 	// Phase 2: approvals (see approvals.go).
 	Approvals     Approvals      `yaml:"approvals"`
@@ -655,6 +658,7 @@ func (c *Config) validate() error {
 		// are done by the policy package (see policy.Compile).
 	}
 
+	c.validateQuotas(add)
 	c.validateApprovals(groupNames, dbNames, add)
 	c.validateNotifications(add)
 	c.validateAuditors(groupNames, add)

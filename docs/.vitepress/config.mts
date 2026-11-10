@@ -64,6 +64,7 @@ export default withMermaid(defineConfig({
         text: "Administration",
         items: [
           { text: "Policies and roles", link: "/policies" },
+          { text: "Quotas", link: "/quotas" },
           { text: "Masking and audit", link: "/masking-and-audit" },
           { text: "Authentication", link: "/authentication" },
           { text: "SCIM", link: "/scim" },

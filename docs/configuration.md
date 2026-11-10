@@ -261,6 +261,22 @@ A map from name to `{ method: redact | partial | hmac }`. See [masking methods](
 
 Without policies, defaults apply ([policies.md](policies.md#default-policies)).
 
+### quotas
+
+Limits on how much one person (with their agents) may read over time; see [quotas.md](quotas.md). Every matching quota applies.
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique; rule `quota:<name>` and the key of the counters |
+| `when` | CEL | Optional condition over `principal`, `database`, `stmt` and `columns`; empty matches every read. An evaluation error matches |
+| `queries_per_minute` | int | Queries in the current minute |
+| `queries_per_hour` | int | Queries in the last hour |
+| `rows_per_hour` | int | Rows returned in the last hour |
+| `rows_per_day` | int | Rows returned in the last 24 hours |
+| `hint` | string | Added to the hint of a denial |
+
+At least one limit is required. Usage is kept in the management database (shared by all instances with `store.driver: postgres`).
+
 ### scim
 
 See [scim.md](scim.md).
@@ -345,7 +361,7 @@ Top-level settings that go with them:
 | `slack.app_token_env` | env name | `SLACK_APP_TOKEN` | App-level token (Socket Mode) |
 | `slack.bot_token_env` | env name | `SLACK_BOT_TOKEN` | Bot token |
 | `anomaly.denials_per_10m` | int | `10` | Denials per requester in ten minutes before `anomaly_detected` |
-| `anomaly.rows_per_hour` | int | `100000` | Rows returned to one requester in an hour before `anomaly_detected` |
+| `anomaly.rows_per_hour` | int | `100000` | Rows returned to one requester in an hour before `anomaly_detected` (to enforce a limit, use [quotas](quotas.md)) |
 | `notifications_language` | `en` \| `ja` | `en` | Language of notification messages |
 | `notifications_webhook_secret_env` | env name | | HMAC-SHA256 key that signs webhook bodies (`X-Dbgw-Signature`) |
 

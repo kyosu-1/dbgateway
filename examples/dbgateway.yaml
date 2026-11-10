@@ -200,3 +200,14 @@ policies:                       # top to bottom, first match wins; no match = de
     when: stmt.is_write
     action: approve
     require: { reason: true, step_up: true }
+
+quotas:                         # every matching quota applies; counted per person (an agent counts against its person)
+  - name: agents-prod
+    when: principal.kind == "agent" && database.labels.env == "prod"
+    queries_per_minute: 30
+    rows_per_hour: 20000        # a read never returns more rows than the quota has left
+    rows_per_day: 100000
+    hint: "Ask #data-platform if you need a higher quota."
+  - name: people-prod
+    when: principal.kind == "human" && database.labels.env == "prod"
+    rows_per_day: 500000        # includes exports from the SQL editor

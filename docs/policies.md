@@ -17,7 +17,8 @@ For `execute_sql` (and the same request from the SQL editor, the CLI or the API)
 7. **Policy rules**, top to bottom; the first match wins. No match means deny.
 8. **Built-in guards** that no rule can turn off.
 9. **Masking plan.** If the source of any result column cannot be traced, the request is denied before it runs.
-10. Execute, mask, write the audit log, return.
+10. **Quotas** (reads). If a matching [quota](quotas.md) is used up, the read is denied (rule `quota:<name>`); otherwise its row limit is lowered to what the quotas have left.
+11. Execute, mask, count the read against its quotas, write the audit log, return.
 
 Every denial comes back with the `stage` (`parse`, `role` or `policy`), the `rule`, a `reason` (why) and a `hint` (how to get through). AI agents use the hint to fix their query themselves.
 
@@ -238,6 +239,8 @@ server:
 
 Shadow mode lets you roll out policies without breaking people's work. It relaxes exactly one thing: **a policy denial of a read** (a `deny` rule, or no matching rule) becomes an allow. The audit log entry records the rule that would have denied it in `shadow_denied_by`, and `explain_policy` shows it too.
 
+A used-up [quota](quotas.md#shadow-mode) is treated the same way: the read runs and `shadow_denied_by` records `quota:<name>`.
+
 Shadow mode never relaxes role checks, parse-stage rejections, the reason requirement, the built-in guards, masking, or anything about writes.
 
 ## Checking a decision
@@ -248,7 +251,7 @@ Shadow mode never relaxes role checks, parse-stage rejections, the reason requir
 - **Check the decision** in the SQL editor ([console.md](console.md)),
 - `dbgw explain` ([cli.md](cli.md)).
 
-It returns the decision, the stage and rule, the reason and hint of a denial, `shadow_denied_by`, the risk, the estimate, every referenced column with its class and usage, and how each result column would be returned (as is, masked or withheld). For `approve` it also returns the approval rule, its steps and expiry, who could approve the first step, the affected-rows limit, and whether an active break-glass elevation would run the write immediately. It does not need a reason, and it is audited as event `explain`.
+It returns the decision, the stage and rule (including a used-up [quota](quotas.md)), the reason and hint of a denial, `shadow_denied_by`, the risk, the estimate, every referenced column with its class and usage, and how each result column would be returned (as is, masked or withheld). For `approve` it also returns the approval rule, its steps and expiry, who could approve the first step, the affected-rows limit, and whether an active break-glass elevation would run the write immediately. It does not need a reason, and it is audited as event `explain`.
 
 ## Policy tests
 
@@ -301,4 +304,4 @@ cases:
 - Every `expect` field is optional: `decision`, `rule`, `stage`, `risk`, `approval_rule`, and the output columns that must be `masked`, `withheld` or `visible`.
 - The analyzer matches the database's `type`, so MySQL databases are tested with MySQL syntax.
 
-Policy tests cover the decision and the masking plan. They do not cover the reason checks, break-glass elevation or value-based PII detection, which depend on the request or the data.
+Policy tests cover the decision and the masking plan. They do not cover the reason checks, break-glass elevation, quotas or value-based PII detection, which depend on the request, past usage or the data.
