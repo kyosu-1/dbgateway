@@ -100,6 +100,8 @@ type ObjectFilter struct {
 	Schema  string
 	Detail  string // "names" | "summary" | "full"
 	Limit   int
+	// HiddenSchemas are never listed, even when requested (backup schemas).
+	HiddenSchemas []string
 }
 
 // Object is a schema object returned by Introspect.

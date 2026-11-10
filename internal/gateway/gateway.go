@@ -276,6 +276,9 @@ func (g *Gateway) SearchObjects(ctx context.Context, p *identity.Principal, req 
 		req.Detail = "summary" // browsing reads the cached catalog only
 	}
 	filter := analysis.ObjectFilter{Keyword: req.Keyword, Schema: req.Schema, Detail: req.Detail, Limit: req.Limit + 1}
+	if b := d.cfg.Backup; b != nil {
+		filter.HiddenSchemas = []string{b.Schema}
+	}
 	var objs []analysis.Object
 	if req.Detail == "full" {
 		conn, cerr := d.connection(ctx)
@@ -530,12 +533,6 @@ func (g *Gateway) ExecuteSQL(ctx context.Context, p *identity.Principal, req Exe
 			return denied(analysis.StagePolicy, "builtin:approval-unavailable",
 				"Writes cannot be accepted because the approval service is unavailable.", "Contact an administrator.")
 		}
-		if b := d.cfg.Backup; b != nil && b.Required {
-			if plan, why := g.planBackup(ctx, d, req.SQL, ev); plan == nil && why != "" {
-				msg, hint := backupUnsupported(why)
-				return denied(analysis.StagePolicy, ruleBackupUnsupported, msg, hint)
-			}
-		}
 		if !p.IsAgent() && g.approvals.ElevationActive(ctx, p, d.cfg.Name) {
 			return g.breakGlassWrite(ctx, p, d, conn, req, ev, resp, entry, finish, failed)
 		}
@@ -634,10 +631,20 @@ func (g *Gateway) evaluate(ctx context.Context, p *identity.Principal, d *databa
 		return d.adapter.Estimate(ctx, conn, sql, analysis.ExecOptions{ReadOnly: !write,
 			StatementTimeout: limits.StatementTimeout.D(), LockTimeout: limits.LockTimeout.D()})
 	}
-	ev := g.Evaluate(ctx, p, d.cfg, d.adapter, sql, cat, estimate)
+	restore := restoreFunc(d, conn)
+	ev := g.Evaluate(ctx, p, d.cfg, d.adapter, sql, cat, estimate, restore)
 	if ev.Analysis != nil && ev.Analysis.Statement.Unknown && time.Since(cat.LoadedAt) > 5*time.Second {
 		if fresh, err := d.catalog(ctx, 0); err == nil {
-			ev = g.Evaluate(ctx, p, d.cfg, d.adapter, sql, fresh, estimate)
+			ev = g.Evaluate(ctx, p, d.cfg, d.adapter, sql, fresh, estimate, restore)
+		}
+	}
+	// A database that requires backups refuses writes that cannot be
+	// backed up (execute_sql, explain_policy and the re-evaluation before
+	// an approved write runs all see this).
+	if b := d.cfg.Backup; b != nil && b.Required && ev.NeedsApproval() {
+		if plan, why := g.planBackup(ctx, d, sql, ev); plan == nil && why != "" {
+			msg, hint := backupUnsupported(why)
+			ev.Decision = deny(analysis.StagePolicy, ruleBackupUnsupported, msg, hint)
 		}
 	}
 	return ev, conn, nil

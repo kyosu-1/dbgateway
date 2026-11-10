@@ -73,7 +73,10 @@ func deny(stage analysis.Stage, rule, msg, hint string) policy.Decision {
 }
 
 // Evaluate runs the role check, analysis, classification and policy.
-func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *config.Database, an Analyzer, sql string, cat *analysis.Catalog, estimate EstimateFunc) *Evaluation {
+//
+// restore recognizes restore statements of backed-up writes; without it
+// (nil), statements referencing the backup schema are denied.
+func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *config.Database, an Analyzer, sql string, cat *analysis.Catalog, estimate EstimateFunc, restore RestoreFunc) *Evaluation {
 	ev := &Evaluation{}
 	if !e.RBAC.Has(p, db, identity.RoleQuerier) {
 		ev.Decision = deny(analysis.StageRole, "role:querier",
@@ -92,12 +95,12 @@ func (e *Evaluator) Evaluate(ctx context.Context, p *identity.Principal, db *con
 		return ev
 	}
 	ev.Analysis = qa
-	ev.Columns = e.classifyColumns(db, p.Kind, qa.Statement.Columns)
-	if msg, bad := guardBackupSchema(db, qa); bad {
-		ev.Decision = deny(analysis.StagePolicy, ruleBackupProtected, msg,
-			"Query the original tables instead. To undo a change, use the restore statement shown with the request.")
+	refs, msg, ok := checkRestore(ctx, db, sql, qa, restore)
+	if !ok {
+		ev.Decision = deny(analysis.StagePolicy, ruleBackupProtected, msg, hintBackupProtected)
 		return ev
 	}
+	ev.Columns = e.classifyColumns(db, p.Kind, refs)
 
 	st := &qa.Statement
 	approvals := e.Config.Approvals.Enabled

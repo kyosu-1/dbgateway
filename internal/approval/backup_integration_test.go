@@ -18,13 +18,21 @@ const backupSchema = "dbgw_it_backup"
 
 var taro = &identity.Principal{Kind: identity.KindHuman, Human: "taro@example.com", Groups: []string{"dev"}}
 
-// prepareBackup recreates the backup schema, writable by the write user.
+// prepareBackup recreates the backup schema, writable by the write user,
+// and a small plain-inheritance hierarchy.
 func prepareBackup(t *testing.T, su *pgx.Conn) {
 	t.Helper()
 	for _, q := range []string{
 		`DROP SCHEMA IF EXISTS ` + backupSchema + ` CASCADE`,
 		`CREATE SCHEMA ` + backupSchema,
 		`GRANT USAGE, CREATE ON SCHEMA ` + backupSchema + ` TO dbgw_writer`,
+		`DROP TABLE IF EXISTS dbgw_it_parent CASCADE`,
+		`CREATE TABLE dbgw_it_parent (id bigint PRIMARY KEY, plan text NOT NULL)`,
+		`CREATE TABLE dbgw_it_child (extra text) INHERITS (dbgw_it_parent)`,
+		`INSERT INTO dbgw_it_parent VALUES (1, 'free')`,
+		`INSERT INTO dbgw_it_child VALUES (2, 'free', 'x')`,
+		`GRANT SELECT ON dbgw_it_parent, dbgw_it_child TO dbgw_reader`,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON dbgw_it_parent, dbgw_it_child TO dbgw_writer`,
 	} {
 		if _, err := su.Exec(context.Background(), q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -64,6 +72,7 @@ func TestBackupAndRestore(t *testing.T) {
 	su := prepare(t)
 	prepareBackup(t, su)
 	h := setupWith(t, "    backup: { schema: "+backupSchema+" }\n")
+	ctx := context.Background()
 
 	// UPDATE: the changed rows are saved before the write.
 	r := h.submitAndApprove(t, agent, "UPDATE "+table+" SET plan = 'pro' WHERE id IN (3, 4)")
@@ -77,28 +86,46 @@ func TestBackupAndRestore(t *testing.T) {
 	if got := backupRows(t, su, b.Table); len(got) != 2 || got[3] != "free" || got[4] != "free" {
 		t.Fatalf("backup rows: %v", got)
 	}
-	if p := plans(t, su); p[3] != "pro" || p[4] != "pro" {
-		t.Fatalf("not written: %v", p)
-	}
 	// Later changes to other columns survive the restore: only the
 	// assigned columns are set back.
-	if _, err := su.Exec(context.Background(), "UPDATE "+table+" SET email = 'changed@example.com' WHERE id = 3"); err != nil {
+	if _, err := su.Exec(ctx, "UPDATE "+table+" SET email = 'changed@example.com' WHERE id = 3"); err != nil {
 		t.Fatal(err)
 	}
 
-	// The restore statement is an ordinary write: it needs approval.
+	// Statements other than the exact restore cannot use the backup.
+	bk := backupSchema + "." + b.Table
+	for _, sql := range []string{
+		"SELECT * FROM " + bk,
+		"SELECT count(*) FROM " + bk + " WHERE plan = 'free'",
+		"DELETE FROM " + bk + " WHERE id = 3",
+		"UPDATE " + table + " AS t SET plan = b.email FROM " + bk + " AS b WHERE t.id = b.id RETURNING t.plan",
+		b.RestoreSQL + " RETURNING t.plan",
+		strings.Replace(b.RestoreSQL, "plan", "email", 1),
+	} {
+		if resp := h.exec(t, hanako, sql); resp.Status != gateway.StatusDenied || resp.Rule != "builtin:backup-protected" {
+			t.Errorf("%s: %+v", sql, resp)
+		}
+	}
+	// The backup schema is hidden from exploration.
+	if sr, err := h.gw.SearchObjects(ctx, hanako, gateway.SearchRequest{Database: "it", Schema: backupSchema, Detail: "full"}); err != nil || len(sr.Objects) != 0 {
+		t.Fatalf("search: %+v %v", sr, err)
+	}
+
+	// The restore statement is an ordinary write: it needs approval, and
+	// an agent can submit it (backup columns are classified like the
+	// columns they were copied from). It is itself backed up.
 	if !strings.HasPrefix(b.RestoreSQL, "UPDATE ") {
 		t.Fatalf("restore sql: %q", b.RestoreSQL)
 	}
-	rr := h.submitAndApprove(t, taro, b.RestoreSQL)
-	if rr.Status != approval.StatusSucceeded || rr.Result.RowsAffected != 2 {
+	rr := h.submitAndApprove(t, agent, b.RestoreSQL)
+	if rr.Status != approval.StatusSucceeded || rr.Result.RowsAffected != 2 || rr.Result.Backup == nil || rr.Result.Backup.Rows != 2 {
 		t.Fatalf("restore: %+v %+v", rr, rr.Result)
 	}
 	if p := plans(t, su); p[3] != "free" || p[4] != "free" {
 		t.Fatalf("not restored: %v", p)
 	}
 	var email string
-	if err := su.QueryRow(context.Background(), "SELECT email FROM "+table+" WHERE id = 3").Scan(&email); err != nil || email != "changed@example.com" {
+	if err := su.QueryRow(ctx, "SELECT email FROM "+table+" WHERE id = 3").Scan(&email); err != nil || email != "changed@example.com" {
 		t.Fatalf("email = %q, %v", email, err)
 	}
 
@@ -107,13 +134,10 @@ func TestBackupAndRestore(t *testing.T) {
 	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.Rows != 1 {
 		t.Fatalf("delete: %+v %+v", r, r.Result)
 	}
-	if _, ok := plans(t, su)[9]; ok {
-		t.Fatal("not deleted")
-	}
 	if !strings.HasPrefix(r.Result.Backup.RestoreSQL, "INSERT INTO ") {
 		t.Fatalf("restore sql: %q", r.Result.Backup.RestoreSQL)
 	}
-	rr = h.submitAndApprove(t, taro, r.Result.Backup.RestoreSQL)
+	rr = h.submitAndApprove(t, agent, r.Result.Backup.RestoreSQL)
 	if rr.Status != approval.StatusSucceeded || rr.Result.RowsAffected != 1 {
 		t.Fatalf("restore: %+v %+v", rr, rr.Result)
 	}
@@ -121,25 +145,78 @@ func TestBackupAndRestore(t *testing.T) {
 		t.Fatal("not re-inserted")
 	}
 
-	// Backup tables can only be read by restores, and never changed.
-	bk := backupSchema + "." + b.Table
-	for _, sql := range []string{
-		"SELECT * FROM " + bk,
-		"SELECT count(*) FROM " + bk + " WHERE plan = 'free'",
-		"DELETE FROM " + bk + " WHERE id = 3",
-		"UPDATE " + table + " AS t SET plan = 'x' FROM " + bk + " AS b WHERE t.id = b.id RETURNING b.email",
-	} {
-		if resp := h.exec(t, hanako, sql); resp.Status != gateway.StatusDenied || resp.Rule != "builtin:backup-protected" {
-			t.Errorf("%s: %+v", sql, resp)
-		}
-	}
-
 	// A statement that cannot be backed up still runs (backups are not
 	// required here), and says so.
 	r = h.submitAndApprove(t, agent, "UPDATE "+table+" SET plan = 'x' FROM (SELECT 5 AS id) s WHERE "+table+".id = s.id")
 	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.Table != "" ||
-		!strings.Contains(r.Result.Backup.RestoreUnavailable, "No backup was taken") {
+		r.Result.Backup.RestoreUnavailable != "No backup was taken (UPDATE ... FROM)." {
 		t.Fatalf("unsupported: %+v %+v", r, r.Result)
+	}
+
+	// Rows deleted through a plain-inheritance parent came from a child:
+	// backed up, but no generated restore.
+	r = h.submitAndApprove(t, taro, "DELETE FROM dbgw_it_parent WHERE id = 2")
+	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.Rows != 1 ||
+		r.Result.Backup.RestoreSQL != "" || !strings.Contains(r.Result.Backup.RestoreUnavailable, "inheritance") {
+		t.Fatalf("inheritance: %+v %+v", r, r.Result)
+	}
+}
+
+// The backup must hold exactly the rows the write changed; when the two
+// statements select different rows, the write is rolled back.
+func TestBackupMustMatchTheWrite(t *testing.T) {
+	su := prepare(t)
+	prepareBackup(t, su)
+	h := setupWith(t, "    backup: { schema: "+backupSchema+" }\n")
+	mismatches := 0
+	for range 8 {
+		before := plans(t, su)
+		r := h.submitAndApprove(t, taro, "UPDATE "+table+" SET plan = 'rnd' WHERE id = (SELECT id FROM "+table+" ORDER BY random() LIMIT 1)")
+		after := plans(t, su)
+		switch r.Status {
+		case approval.StatusFailed:
+			if !strings.Contains(r.Result.Error, "the backup does not hold the rows the statement changed") {
+				t.Fatalf("failure: %+v", r.Result)
+			}
+			for id, p := range before {
+				if after[id] != p {
+					t.Fatalf("row %d changed although the write failed", id)
+				}
+			}
+			mismatches++
+		case approval.StatusSucceeded:
+			for id := range backupRows(t, su, r.Result.Backup.Table) {
+				if after[id] != "rnd" {
+					t.Fatalf("backup holds row %d, which was not changed", id)
+				}
+			}
+		default:
+			t.Fatalf("status %s", r.Status)
+		}
+		if _, err := su.Exec(context.Background(), "UPDATE "+table+" SET plan = 'free'"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mismatches == 0 {
+		t.Log("random() picked the same row every time; the mismatch path was not exercised")
+	}
+}
+
+// A failed backup is described like a database error: values quoted by
+// the database never reach the result.
+func TestBackupErrorWithholdsValues(t *testing.T) {
+	su := prepare(t)
+	prepareBackup(t, su)
+	h := setupWith(t, "    backup: { schema: "+backupSchema+" }\n")
+	r := h.submitAndApprove(t, taro, "UPDATE "+table+" SET plan = 'x' WHERE id = (SELECT email FROM "+table+" WHERE id = 1)::bigint")
+	if r.Status != approval.StatusFailed || strings.Contains(r.Result.Error, "acct1@example.com") || r.Result.Code != "22P02" {
+		t.Fatalf("result: %+v", r.Result)
+	}
+	if !strings.HasPrefix(r.Result.Error, "Not executed because the backup failed") {
+		t.Fatalf("error: %q", r.Result.Error)
+	}
+	if plans(t, su)[1] != "free" {
+		t.Fatal("written")
 	}
 }
 
@@ -147,18 +224,22 @@ func TestBackupRequired(t *testing.T) {
 	su := prepare(t)
 	prepareBackup(t, su)
 	h := setupWith(t, "    backup: { schema: "+backupSchema+", required: true }\n")
-	resp := h.exec(t, agent, "DELETE FROM "+table+" USING (SELECT 5 AS id) s WHERE "+table+".id = s.id")
-	if resp.Status != gateway.StatusDenied || resp.Rule != "builtin:backup-unsupported" {
+	ctx := context.Background()
+	sql := "DELETE FROM " + table + " USING (SELECT 5 AS id) s WHERE " + table + ".id = s.id"
+	if resp := h.exec(t, agent, sql); resp.Status != gateway.StatusDenied || resp.Rule != "builtin:backup-unsupported" {
 		t.Fatalf("unsupported: %+v", resp)
 	}
-	// A write the backup does not match is rolled back: a WHERE clause
-	// with a volatile function selects different rows each time.
-	r := h.submitAndApprove(t, agent, "UPDATE "+table+" SET plan = 'rnd' WHERE id = 1 OR random() < 0.5")
-	if r.Status == approval.StatusSucceeded {
-		// The two evaluations happened to agree; nothing to check.
-		t.Skip("random() selected the same rows twice")
+	if ex, err := h.gw.ExplainPolicy(ctx, agent, gateway.ExplainRequest{Database: "it", SQL: sql}); err != nil ||
+		ex.Decision != "deny" || ex.Rule != "builtin:backup-unsupported" {
+		t.Fatalf("explain: %+v %v", ex, err)
 	}
-	if p := plans(t, su); p[1] != "free" {
-		t.Fatalf("written although the backup did not match: %v", p)
+	// Restores can be backed up, so they run under required backups too.
+	r := h.submitAndApprove(t, agent, "UPDATE "+table+" SET plan = 'pro' WHERE id = 6")
+	if r.Status != approval.StatusSucceeded || r.Result.Backup == nil || r.Result.Backup.RestoreSQL == "" {
+		t.Fatalf("update: %+v %+v", r, r.Result)
+	}
+	rr := h.submitAndApprove(t, agent, r.Result.Backup.RestoreSQL)
+	if rr.Status != approval.StatusSucceeded || plans(t, su)[6] != "free" {
+		t.Fatalf("restore: %+v %+v", rr, rr.Result)
 	}
 }

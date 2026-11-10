@@ -210,7 +210,7 @@ func Run(ctx context.Context, f *File, cfg *config.Config) ([]Result, error) {
 			results = append(results, r)
 			continue
 		}
-		out := ev.Evaluate(ctx, p, db, analyzer, c.SQL, cat, est)
+		out := ev.Evaluate(ctx, p, db, analyzer, c.SQL, cat, est, nil)
 		d := out.Decision
 		approvalRule := ""
 		if d.ApprovalRule != nil {

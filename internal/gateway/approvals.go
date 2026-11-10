@@ -163,7 +163,7 @@ func (g *Gateway) runWrite(ctx context.Context, p *identity.Principal, d *databa
 		d.invalidateCatalog()
 	}
 	if backup == nil && noBackup != "" {
-		backup = &Backup{Source: firstWritten(ev.Analysis), RestoreUnavailable: "No backup was taken: " + noBackup + "."}
+		backup = &Backup{Source: firstWritten(ev.Analysis), RestoreUnavailable: "No backup was taken (" + noBackup + ")."}
 	}
 	if len(res.Columns) != len(plans) {
 		// The write is committed; only the RETURNING rows are withheld.
@@ -218,7 +218,14 @@ func DescribeError(err error) (string, string) {
 	}
 	var be *analysis.BackupError
 	if errors.As(err, &be) {
-		return "Not executed because the backup failed (" + be.Reason + "). Nothing was changed.", ""
+		msg := "Not executed because the backup failed: " + be.Reason + ". Nothing was changed."
+		if be.Err != nil {
+			// The database error may quote values: describe it like any
+			// other database error.
+			dbMsg, code := describeDBError(be.Err)
+			return msg + " " + dbMsg, code
+		}
+		return msg, ""
 	}
 	return describeDBError(err)
 }

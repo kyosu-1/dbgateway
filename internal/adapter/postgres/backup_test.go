@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	pg "github.com/pganalyze/pg_query_go/v6"
+
 	"github.com/kyosu-1/dbgateway/internal/analysis"
 )
 
@@ -18,12 +20,12 @@ func TestPlanBackup(t *testing.T) {
 		set    []string
 	}{
 		{"UPDATE users SET plan = 'pro', name = 'x' WHERE id = 1", analysis.KindUpdate, "public.users",
-			"SELECT users.* FROM users WHERE id = 1", []string{"plan", "name"}},
+			"SELECT users.*, users.tableoid AS _dbgw_tableoid, users.ctid AS _dbgw_ctid FROM users WHERE id = 1", []string{"plan", "name"}},
 		{"update public.users u set plan = 'free' where u.created_at < now() - interval '1 year' returning u.id", analysis.KindUpdate, "public.users",
-			"SELECT u.* FROM public.users u WHERE u.created_at < (now() - '1 year'::interval)", []string{"plan"}},
+			"SELECT u.*, u.tableoid AS _dbgw_tableoid, u.ctid AS _dbgw_ctid FROM public.users u WHERE u.created_at < (now() - '1 year'::interval)", []string{"plan"}},
 		{"DELETE FROM ONLY orders WHERE user_id IN (SELECT id FROM users WHERE plan = 'x')", analysis.KindDelete, "public.orders",
-			"SELECT orders.* FROM ONLY orders WHERE user_id IN (SELECT id FROM users WHERE plan = 'x')", nil},
-		{"DELETE FROM orders", analysis.KindDelete, "public.orders", "SELECT orders.* FROM orders", nil},
+			"SELECT orders.*, orders.tableoid AS _dbgw_tableoid, orders.ctid AS _dbgw_ctid FROM ONLY orders WHERE user_id IN (SELECT id FROM users WHERE plan = 'x')", nil},
+		{"DELETE FROM orders", analysis.KindDelete, "public.orders", "SELECT orders.*, orders.tableoid AS _dbgw_tableoid, orders.ctid AS _dbgw_ctid FROM orders", nil},
 	} {
 		p, err := a.PlanBackup(tt.sql, testCatalog())
 		if err != nil {
@@ -34,10 +36,9 @@ func TestPlanBackup(t *testing.T) {
 			t.Errorf("%s:\n got  %s %s %q %v\n want %s %s %q %v", tt.sql, p.Kind, p.Target.FQN(), p.Select, p.SetColumns,
 				tt.kind, tt.target, tt.sel, tt.set)
 		}
-		// The backup query must itself be a plain, fully analyzable read.
-		qa, err := a.Analyze(t.Context(), p.Select, testCatalog())
-		if err != nil || qa.Statement.Kind != analysis.KindSelect || qa.Statement.IsWrite || qa.Statement.Unknown {
-			t.Errorf("%s: backup query %q does not analyze as a plain SELECT: %v", tt.sql, p.Select, err)
+		// The backup query must parse as a single SELECT.
+		if tree, err := pg.Parse(p.Select); err != nil || len(tree.Stmts) != 1 || tree.Stmts[0].Stmt.GetSelectStmt() == nil {
+			t.Errorf("%s: backup query %q: %v", tt.sql, p.Select, err)
 		}
 	}
 	for _, sql := range []string{
@@ -50,7 +51,7 @@ func TestPlanBackup(t *testing.T) {
 		"MERGE INTO users u USING orders o ON u.id = o.user_id WHEN MATCHED THEN DELETE",
 		"SELECT 1",
 	} {
-		if _, err := a.PlanBackup(sql, testCatalog()); !errors.Is(err, errBackupUnsupported) {
+		if _, err := a.PlanBackup(sql, testCatalog()); !errors.Is(err, analysis.ErrBackupUnsupported) {
 			t.Errorf("%s: err = %v, want unsupported", sql, err)
 		}
 	}

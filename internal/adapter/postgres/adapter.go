@@ -277,16 +277,12 @@ func (c *conn) executeWrite(ctx context.Context, sql string, opt analysis.ExecOp
 			return &analysis.AffectedRowsError{Affected: res.RowsAffected, Max: opt.MaxAffectedRows}
 		}
 		if b := opt.Backup; b != nil {
-			if saved != res.RowsAffected {
-				return &analysis.BackupError{Reason: fmt.Sprintf(
-					"the backup holds %d rows but the statement changed %d; rolled back", saved, res.RowsAffected)}
-			}
-			restore, why, err := restoreSQL(ctx, tx, b)
-			if err != nil {
+			if err := verifyBackup(ctx, tx, b, saved, res.RowsAffected); err != nil {
 				return err
 			}
-			res.Backup = &analysis.BackupResult{Schema: b.Schema, Table: b.Table, Source: b.Plan.Target.FQN(),
-				Rows: saved, RestoreSQL: restore, RestoreUnavailable: why}
+			if res.Backup, err = finishBackup(ctx, tx, b, saved); err != nil {
+				return err
+			}
 		}
 		return tx.Commit(ctx)
 	})
